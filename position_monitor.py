@@ -1419,7 +1419,10 @@ async def _verify_protective_orders(session, position: PositionModel, exchange_c
         return False
 
     try:
-        open_orders = await get_open_orders(position.ticker, exchange_config)
+        open_orders = await get_open_orders(
+            position.ticker,
+            {**exchange_config, "raise_on_error": True, "require_algo_orders": True},
+        )
     except Exception as e:
         logger.warning(f"[PositionMonitor] Skipping protective order verification for {position.ticker}: {e}")
         return False

@@ -583,6 +583,47 @@ async def test_verify_protective_orders_places_missing_sl_and_tp_without_order_i
 
 
 @pytest.mark.asyncio
+async def test_verify_protective_orders_recognizes_okx_algo_order_ids(monkeypatch):
+    position = PositionModel(
+        id="pos-protect-okx",
+        ticker="BTCUSDT",
+        direction="long",
+        status="open",
+        quantity=1.0,
+        remaining_quantity=1.0,
+        stop_loss=95.0,
+        stop_loss_order_id="sl-algo",
+        take_profit_json=json.dumps([
+            {"level": 1, "price": 110.0, "qty_pct": 100, "status": "pending", "order_id": "tp-algo"},
+        ]),
+        take_profit_order_ids_json=json.dumps(["tp-algo"]),
+    )
+
+    async def fake_open_orders(ticker, exchange_config):
+        assert ticker == "BTCUSDT"
+        assert exchange_config["require_algo_orders"] is True
+        assert exchange_config["raise_on_error"] is True
+        return [
+            {"id": "tp-algo", "source": "okx_algo", "type": "conditional"},
+            {"id": "sl-algo", "source": "okx_algo", "type": "conditional"},
+        ]
+
+    create_order = AsyncMock()
+
+    monkeypatch.setattr("exchange.get_open_orders", fake_open_orders)
+    monkeypatch.setattr("exchange._create_conditional_order", create_order)
+
+    class FakeSession:
+        async def flush(self):
+            return None
+
+    changed = await _verify_protective_orders(FakeSession(), position, {"live_trading": True, "market_type": "contract"})
+
+    assert changed is False
+    create_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_ghost_position_close_waits_for_interval(monkeypatch):
     position = PositionModel(
         id="ghost-wait",

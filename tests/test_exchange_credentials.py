@@ -319,6 +319,7 @@ async def test_exchange_place_protective_stop_preserves_explicit_empty_credentia
         ("get_balance", "total", {"USDT": 1000.0}),
         ("get_ticker", "symbol", "BTC/USDT:USDT"),
         ("get_latest_candle", "close", 100.0),
+        ("get_open_orders", "id", "order-1"),
         ("get_open_positions", "contracts", 1.0),
         ("get_recent_orders", "id", "order-1"),
     ],
@@ -363,6 +364,22 @@ async def test_exchange_query_paths_preserve_explicit_empty_credentials(
         def fetch_positions(self):
             return [{"symbol": "BTC/USDT:USDT", "side": "long", "contracts": 1.0}]
 
+        def fetch_open_orders(self, symbol=None):
+            return [
+                {
+                    "id": "order-1",
+                    "symbol": symbol or "BTC/USDT:USDT",
+                    "side": "sell",
+                    "type": "limit",
+                    "price": 110.0,
+                    "amount": 1.0,
+                    "remaining": 1.0,
+                    "status": "open",
+                    "timestamp": 1,
+                    "datetime": "2024-01-01T00:00:00Z",
+                }
+            ]
+
         def fetch_closed_orders(self, symbol=None, since=None, limit=None):
             return [
                 {
@@ -395,6 +412,9 @@ async def test_exchange_query_paths_preserve_explicit_empty_credentials(
         result = await exchange_module.get_ticker("BTCUSDT", exchange_config)
     elif call_name == "get_latest_candle":
         result = await exchange_module.get_latest_candle("BTCUSDT", "1h", exchange_config)
+    elif call_name == "get_open_orders":
+        result = await exchange_module.get_open_orders("BTCUSDT", exchange_config)
+        result = result[0]
     elif call_name == "get_open_positions":
         result = await exchange_module.get_open_positions(exchange_config)
         result = result[0]
@@ -404,6 +424,72 @@ async def test_exchange_query_paths_preserve_explicit_empty_credentials(
 
     assert result[expected_key] == expected_value
     _assert_empty_credentials(captured)
+
+
+@pytest.mark.asyncio
+async def test_get_open_orders_includes_okx_algo_orders(monkeypatch):
+    _set_global_exchange_defaults(monkeypatch)
+
+    class FakeExchange:
+        id = "okx"
+        options = {"defaultType": "future"}
+
+        def __init__(self):
+            self.algo_params = None
+            self.markets = {
+                "BTC/USDT:USDT": {
+                    "id": "BTC-USDT-SWAP",
+                    "contract": True,
+                    "swap": True,
+                }
+            }
+
+        def load_markets(self):
+            return self.markets
+
+        def market(self, symbol):
+            return self.markets[symbol]
+
+        def fetch_open_orders(self, symbol=None):
+            return [
+                {
+                    "id": "limit-1",
+                    "symbol": symbol,
+                    "side": "sell",
+                    "type": "limit",
+                    "amount": 1.0,
+                    "remaining": 1.0,
+                    "status": "open",
+                }
+            ]
+
+        def privateGetTradeOrdersAlgoPending(self, params=None):
+            self.algo_params = dict(params or {})
+            return {
+                "data": [
+                    {
+                        "algoId": "algo-sl-1",
+                        "instId": "BTC-USDT-SWAP",
+                        "side": "sell",
+                        "ordType": "conditional",
+                        "sz": "1",
+                        "state": "live",
+                        "slTriggerPx": "95",
+                        "cTime": "1710000000000",
+                    }
+                ]
+            }
+
+    fake_exchange = FakeExchange()
+    monkeypatch.setattr(exchange_module, "_get_or_create_exchange", lambda **kwargs: fake_exchange)
+
+    result = await exchange_module.get_open_orders("BTCUSDT", _user_exchange_config())
+
+    assert {order["id"] for order in result} == {"limit-1", "algo-sl-1"}
+    assert fake_exchange.algo_params == {"instId": "BTC-USDT-SWAP"}
+    algo_order = next(order for order in result if order["id"] == "algo-sl-1")
+    assert algo_order["source"] == "okx_algo"
+    assert algo_order["remaining"] == "1"
 
 
 @pytest.mark.asyncio

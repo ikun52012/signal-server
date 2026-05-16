@@ -2577,6 +2577,114 @@ async def fetch_single_position(ticker: str, exchange_config: dict | None = None
         raise
 
 
+def _open_order_field(order: dict[str, Any], info: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = order.get(key)
+        if value not in (None, ""):
+            return value
+        value = info.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _normalize_open_order(order: dict[str, Any], source: str = "open_order") -> dict[str, Any]:
+    info = order.get("info") if isinstance(order.get("info"), dict) else {}
+    order_id = _open_order_field(order, info, "id", "algoId", "ordId", "clOrdId", "algoClOrdId")
+    amount = _open_order_field(order, info, "amount", "sz")
+    remaining = _open_order_field(order, info, "remaining", "amount", "sz")
+    status = _open_order_field(order, info, "status", "state") or "open"
+    return {
+        "id": order_id,
+        "symbol": _open_order_field(order, info, "symbol", "instId"),
+        "side": _open_order_field(order, info, "side"),
+        "type": _open_order_field(order, info, "type", "ordType"),
+        "price": _open_order_field(order, info, "price", "px", "triggerPx", "tpTriggerPx", "slTriggerPx"),
+        "amount": amount,
+        "filled": _open_order_field(order, info, "filled", "accFillSz") or 0,
+        "remaining": remaining or 0,
+        "status": status,
+        "timestamp": _open_order_field(order, info, "timestamp", "cTime"),
+        "datetime": _open_order_field(order, info, "datetime"),
+        "source": source,
+        "info": info or order,
+    }
+
+
+def _dedupe_open_orders(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for order in orders:
+        order_id = str(order.get("id") or "")
+        key = order_id or f"{order.get('source')}:{order.get('symbol')}:{order.get('side')}:{order.get('type')}:{order.get('price')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(order)
+    return deduped
+
+
+def _okx_inst_id(exchange: ccxt.Exchange, resolved_symbol: str | None) -> str | None:
+    if not resolved_symbol:
+        return None
+    try:
+        market = exchange.market(resolved_symbol)
+    except Exception:
+        market = (getattr(exchange, "markets", None) or {}).get(resolved_symbol)
+    if isinstance(market, dict):
+        info = market.get("info") if isinstance(market.get("info"), dict) else {}
+        inst_id = market.get("id") or info.get("instId")
+        if inst_id:
+            return str(inst_id)
+
+    if ":" in resolved_symbol:
+        base_quote = resolved_symbol.split(":", 1)[0]
+        return f"{base_quote.replace('/', '-')}-SWAP"
+    return resolved_symbol.replace("/", "-")
+
+
+async def _call_okx_pending_algo_orders(exchange: ccxt.Exchange, params: dict[str, Any]) -> Any:
+    method = getattr(exchange, "privateGetTradeOrdersAlgoPending", None) or getattr(
+        exchange, "private_get_trade_orders_algo_pending", None
+    )
+    if not method:
+        return {"data": []}
+    result = await asyncio.to_thread(method, params)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+def _extract_okx_algo_orders(response: Any) -> list[dict[str, Any]]:
+    if isinstance(response, dict):
+        data = response.get("data") or []
+    else:
+        data = response or []
+    return [item for item in data if isinstance(item, dict)]
+
+
+async def _fetch_okx_open_algo_orders(exchange: ccxt.Exchange, resolved_symbol: str | None = None) -> list[dict[str, Any]]:
+    base_params: dict[str, Any] = {}
+    inst_id = _okx_inst_id(exchange, resolved_symbol)
+    if inst_id:
+        base_params["instId"] = inst_id
+
+    try:
+        response = await _call_okx_pending_algo_orders(exchange, base_params)
+        return [_normalize_open_order(order, source="okx_algo") for order in _extract_okx_algo_orders(response)]
+    except Exception as first_exc:
+        fallback_orders: list[dict[str, Any]] = []
+        for ord_type in ("conditional", "oco", "trigger", "move_order_stop", "trailing_stop"):
+            try:
+                response = await _call_okx_pending_algo_orders(exchange, {**base_params, "ordType": ord_type})
+                fallback_orders.extend(_extract_okx_algo_orders(response))
+            except Exception as exc:
+                logger.debug(f"[Exchange] OKX algo order query failed for ordType={ord_type}: {exc}")
+        if fallback_orders:
+            return [_normalize_open_order(order, source="okx_algo") for order in fallback_orders]
+        raise first_exc
+
+
 async def get_open_orders(symbol: str | None = None, exchange_config: dict | None = None) -> list[dict]:
     """Fetch open/pending orders from exchange."""
     exchange_config = exchange_config or {}
@@ -2602,27 +2710,22 @@ async def get_open_orders(symbol: str | None = None, exchange_config: dict | Non
             )
             orders = await asyncio.to_thread(exchange.fetch_open_orders, resolved_symbol)
         else:
+            resolved_symbol = None
             orders = await asyncio.to_thread(exchange.fetch_open_orders)
 
-        return [
-            {
-                "id": o.get("id"),
-                "symbol": o.get("symbol"),
-                "side": o.get("side"),
-                "type": o.get("type"),
-                "price": o.get("price"),
-                "amount": o.get("amount"),
-                "filled": o.get("filled") or 0,
-                "remaining": o.get("remaining") or o.get("amount") or 0,
-                "status": o.get("status"),
-                "timestamp": o.get("timestamp"),
-                "datetime": o.get("datetime"),
-            }
-            for o in orders
-        ]
+        normalized_orders = [_normalize_open_order(o) for o in orders if isinstance(o, dict)]
+        if _exchange_id(exchange) == "okx":
+            try:
+                normalized_orders.extend(await _fetch_okx_open_algo_orders(exchange, resolved_symbol))
+            except Exception as exc:
+                logger.warning(f"[Exchange] Failed to fetch OKX pending algo orders: {exc}")
+                if exchange_config.get("require_algo_orders") or exchange_config.get("raise_on_error"):
+                    raise
+
+        return _dedupe_open_orders(normalized_orders)
     except Exception as e:
         logger.error(f"[Exchange] Failed to fetch open orders: {e}")
-        if exchange_config.get("raise_on_error"):
+        if exchange_config.get("raise_on_error") or exchange_config.get("require_algo_orders"):
             raise
         return []
 
