@@ -643,6 +643,119 @@ async def test_missing_entry_order_syncs_when_exchange_exposure_exists(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_empty_open_positions_and_single_fetch_none_closes_open_db_position(monkeypatch):
+    position = PositionModel(
+        id="pos-empty-list-ghost",
+        ticker="BTCUSDT",
+        direction="long",
+        status="open",
+        entry_price=100.0,
+        quantity=1.0,
+        remaining_quantity=1.0,
+        opened_at=utcnow(),
+        last_price=99.0,
+    )
+    _GHOST_POSITION_TRACKER[position.id] = {
+        "fail_count": 5,
+        "first_missing_at": utcnow(),
+        "last_check": utcnow(),
+    }
+
+    async def fake_open_positions(*args, **kwargs):
+        return []
+
+    async def fake_recent_orders(*args, **kwargs):
+        return []
+
+    async def fake_fetch_single_position(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("exchange.get_open_positions", fake_open_positions)
+    monkeypatch.setattr("exchange.get_recent_orders", fake_recent_orders)
+    monkeypatch.setattr("exchange.fetch_single_position", fake_fetch_single_position)
+
+    class FakeSession:
+        def __init__(self):
+            self.flush_count = 0
+
+        async def flush(self):
+            self.flush_count += 1
+
+    session = FakeSession()
+    stats = await _reconcile_exchange_position(session, position, {"live_trading": True, "market_type": "contract"})
+
+    assert stats["closed"] == 1
+    assert position.status == "closed"
+    assert position.close_reason == "exchange_position_not_found"
+    assert position.remaining_quantity == 0.0
+    assert position.exit_price == 99.0
+    assert session.flush_count == 1
+    assert position.id not in _GHOST_POSITION_TRACKER
+
+
+@pytest.mark.asyncio
+async def test_empty_open_positions_keeps_active_pending_limit_order(monkeypatch):
+    position = PositionModel(
+        id="pos-active-pending-limit",
+        ticker="BTCUSDT",
+        direction="long",
+        status="pending",
+        entry_price=100.0,
+        quantity=1.0,
+        remaining_quantity=1.0,
+        opened_at=utcnow(),
+        last_price=100.0,
+        entry_order_id="entry-live",
+        order_type="limit",
+    )
+
+    class FakeExchange:
+        def fetch_order(self, order_id, symbol):
+            return {
+                "id": order_id,
+                "symbol": symbol,
+                "status": "open",
+                "filled": 0,
+                "amount": 1.0,
+                "timestamp": utcnow().timestamp() * 1000,
+            }
+
+    async def fake_open_positions(*args, **kwargs):
+        return []
+
+    async def fake_recent_orders(*args, **kwargs):
+        return []
+
+    async def fake_fetch_single_position(*args, **kwargs):
+        return None
+
+    async def fake_ticker(*args, **kwargs):
+        return {"last": 100.0}
+
+    monkeypatch.setattr("exchange._get_or_create_exchange", lambda **kwargs: FakeExchange())
+    monkeypatch.setattr("exchange._resolve_symbol", lambda *args, **kwargs: "BTC/USDT:USDT")
+    monkeypatch.setattr("exchange.get_open_positions", fake_open_positions)
+    monkeypatch.setattr("exchange.get_recent_orders", fake_recent_orders)
+    monkeypatch.setattr("exchange.fetch_single_position", fake_fetch_single_position)
+    monkeypatch.setattr("exchange.get_ticker", fake_ticker)
+
+    class FakeSession:
+        def __init__(self):
+            self.flush_count = 0
+
+        async def flush(self):
+            self.flush_count += 1
+
+    session = FakeSession()
+    stats = await _reconcile_exchange_position(session, position, {"live_trading": True, "market_type": "contract"})
+
+    assert stats["closed"] == 0
+    assert position.status == "pending"
+    assert position.close_reason in {None, ""}
+    assert session.flush_count == 0
+
+
+@pytest.mark.asyncio
 async def test_verify_protective_orders_places_missing_sl_and_tp_without_order_ids(monkeypatch):
     position = PositionModel(
         id="pos-missing-protection",

@@ -585,6 +585,29 @@ async def _has_active_duplicate_position(session: AsyncSession, position: Positi
     return any(position_symbol_key(row.ticker) == target_key for row in result.scalars().all())
 
 
+async def _close_db_position_without_exchange_exposure(
+    session: AsyncSession,
+    position: PositionModel,
+    close_reason: str,
+) -> None:
+    """Close a DB-only position after targeted exchange verification found no exposure."""
+    now = utcnow()
+    position.status = "closed"
+    position.close_reason = close_reason
+    position.closed_at = now
+    position.updated_at = now
+    position.remaining_quantity = 0.0
+    position.unrealized_pnl_usdt = 0.0
+    fallback_price = safe_float(position.last_price or position.entry_price)
+    if fallback_price > 0:
+        position.exit_price = fallback_price
+    position.current_pnl_pct = safe_float(position.realized_pnl_pct)
+    position.pnl_pct = safe_float(position.realized_pnl_pct)
+    _GHOST_POSITION_TRACKER.pop(str(position.id), None)
+    _save_ghost_tracker()
+    await session.flush()
+
+
 async def _close_missing_entry_order_without_exposure(
     session: AsyncSession,
     position: PositionModel,
@@ -624,21 +647,7 @@ async def _close_missing_entry_order_without_exposure(
         await session.flush()
         return False
 
-    now = utcnow()
-    position.status = "closed"
-    position.close_reason = "entry_order_not_found"
-    position.closed_at = now
-    position.updated_at = now
-    position.remaining_quantity = 0.0
-    position.unrealized_pnl_usdt = 0.0
-    fallback_price = safe_float(position.last_price or position.entry_price)
-    if fallback_price > 0:
-        position.exit_price = fallback_price
-    position.current_pnl_pct = safe_float(position.realized_pnl_pct)
-    position.pnl_pct = safe_float(position.realized_pnl_pct)
-    _GHOST_POSITION_TRACKER.pop(str(position.id), None)
-    _save_ghost_tracker()
-    await session.flush()
+    await _close_db_position_without_exchange_exposure(session, position, "entry_order_not_found")
     logger.warning(
         f"[PositionMonitor] Closed stale DB position {position.id} for {position.ticker}: "
         f"entry order {position.entry_order_id} is not on exchange and no matching exchange exposure exists."
@@ -1734,21 +1743,8 @@ async def _reconcile_exchange_position(session, position: PositionModel, exchang
         ghost_entry = _GHOST_POSITION_TRACKER.get(position.id)
 
         if not positions_data_reliable:
-            # Exchange returned empty list — could be API instability (e.g. OKX sandbox).
-            # Reset ghost tracker since we cannot trust this data point at all.
-            if ghost_entry and ghost_entry.get("fail_count", 0) > 0:
-                logger.warning(
-                    f"[P0-CRITICAL] Exchange returned empty positions for {position.ticker}; "
-                    f"resetting ghost counter (was {ghost_entry['fail_count']}) "
-                    f"— cannot confirm position is truly gone"
-                )
-                ghost_entry["fail_count"] = 0
-                ghost_entry["first_missing_at"] = now
-                ghost_entry["last_check"] = now
-                _GHOST_POSITION_TRACKER[position.id] = ghost_entry
-                _save_ghost_tracker()
-
-            # Even with empty batch, try single-position verification
+            # Empty batch lists are not enough on their own, but a targeted
+            # single-position miss is enough to clean stale DB-only positions.
             from exchange import fetch_single_position
             try:
                 single_pos = await fetch_single_position(position.ticker, checked_exchange_config)
@@ -1766,17 +1762,39 @@ async def _reconcile_exchange_position(session, position: PositionModel, exchang
                         stats["updated"] += 1
                     return stats
             except Exception as single_exc:
-                logger.debug(
-                    f"[P0-CRITICAL] Single-position verification also failed for {position.ticker}: {single_exc}"
+                logger.warning(
+                    f"[P0-CRITICAL] Empty positions list but single-position verification failed "
+                    f"for {position.ticker}: {single_exc}. Keeping DB state unchanged."
                 )
+                ticker = await get_ticker(position.ticker, exchange_config)
+                mark_price = safe_float(ticker.get("last") or position.last_price)
+                if mark_price > 0:
+                    _update_unrealized(position, mark_price)
+                    stats["updated"] += 1
+                return stats
 
-            # Neither batch nor single fetch confirms the position is gone.
-            # Update unrealized PnL from ticker and defer ghost decision.
-            ticker = await get_ticker(position.ticker, exchange_config)
-            mark_price = safe_float(ticker.get("last") or position.last_price)
-            if mark_price > 0:
-                _update_unrealized(position, mark_price)
-                stats["updated"] += 1
+            if str(position.status or "").lower() == "pending" and position.entry_order_id:
+                logger.info(
+                    f"[PositionMonitor] Empty exchange positions and no filled exposure for pending "
+                    f"limit order {position.entry_order_id} on {position.ticker}; keeping pending order state."
+                )
+                ticker = await get_ticker(position.ticker, exchange_config)
+                mark_price = safe_float(ticker.get("last") or position.last_price)
+                if mark_price > 0:
+                    _update_unrealized(position, mark_price)
+                    stats["updated"] += 1
+                return stats
+
+            await _close_db_position_without_exchange_exposure(
+                session,
+                position,
+                "exchange_position_not_found",
+            )
+            logger.warning(
+                f"[PositionMonitor] Closed stale DB position {position.id} for {position.ticker}: "
+                "get_open_positions returned empty and targeted single-position verification also found no exposure."
+            )
+            stats["closed"] += 1
             return stats
 
         # Exchange data is non-empty (positions_data_reliable=True) and position not
