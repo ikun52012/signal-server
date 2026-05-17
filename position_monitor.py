@@ -1127,6 +1127,14 @@ async def _check_pending_limit_orders(session, position: PositionModel, exchange
     if not position.entry_order_id or position.entry_order_id == "":
         return
 
+    # P0-FIX: Prevent re-processing an already-processed filled order.
+    # Once a pending order was processed (status=open, entry_price set), skip it.
+    # Otherwise, every cycle re-sets status="open" from a filled order that will
+    # never go away, causing an infinite loop when the user manually closes the
+    # position on the exchange: order_filled→set_open→exchange_empty→next_cycle→order_filled→set_open...
+    if position.status == "open" and safe_float(position.entry_price) > 0:
+        return
+
     try:
         import ccxt
 
