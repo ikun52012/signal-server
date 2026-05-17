@@ -80,7 +80,54 @@ def _is_okx_leverage_error(error_msg: str) -> tuple[bool, str]:
     return False, ""
 
 
-async def _set_leverage_with_retry(exchange, leverage: int, symbol: str, max_retries: int = _LEVERAGE_MAX_RETRIES) -> dict:
+def _okx_leverage_params(margin_mode: str, position_side: str | None = None) -> list[dict[str, str]]:
+    base = {"tdMode": margin_mode}
+    pos_side = str(position_side or "").lower().strip()
+    if pos_side in {"long", "short"}:
+        return [{**base, "posSide": pos_side}, base]
+    return [base]
+
+
+async def _set_leverage_once(
+    exchange,
+    exchange_id: str,
+    leverage: int,
+    symbol: str,
+    margin_mode: str,
+    position_side: str | None,
+) -> dict[str, str] | None:
+    if exchange_id != "okx":
+        await asyncio.to_thread(exchange.set_leverage, leverage, symbol)
+        return None
+
+    last_pos_side_error: Exception | None = None
+    for params in _okx_leverage_params(margin_mode, position_side):
+        try:
+            await asyncio.to_thread(exchange.set_leverage, leverage, symbol, params)
+            return params
+        except Exception as exc:
+            is_okx_lev, okx_code = _is_okx_leverage_error(str(exc))
+            if "posSide" in params and is_okx_lev and okx_code == "51000":
+                last_pos_side_error = exc
+                logger.warning(
+                    f"[P0-FIX] OKX rejected leverage posSide={params['posSide']} for {symbol}; "
+                    "retrying leverage setup without posSide for one-way/net mode compatibility."
+                )
+                continue
+            raise
+
+    if last_pos_side_error:
+        raise last_pos_side_error
+    return None
+
+
+async def _set_leverage_with_retry(
+    exchange,
+    leverage: int,
+    symbol: str,
+    max_retries: int = _LEVERAGE_MAX_RETRIES,
+    position_side: str | None = None,
+) -> dict:
     """P0-FIX: Set leverage with exponential backoff retry mechanism.
 
     Args:
@@ -88,6 +135,7 @@ async def _set_leverage_with_retry(exchange, leverage: int, symbol: str, max_ret
         leverage: Target leverage (e.g., 10 for 10x)
         symbol: Trading symbol (e.g., "BTC/USDT:USDT")
         max_retries: Maximum retry attempts (default: 3)
+        position_side: OKX hedge-mode position side, "long" or "short"
 
     Returns:
         dict with "success": True/False and optional "error" message
@@ -111,12 +159,20 @@ async def _set_leverage_with_retry(exchange, leverage: int, symbol: str, max_ret
     for margin_mode in margin_modes_to_try:
         for attempt in range(max_retries):
             try:
-                if exchange_id == "okx":
-                    params = {"tdMode": margin_mode}
-                    await asyncio.to_thread(exchange.set_leverage, leverage, symbol, params)
-                else:
-                    await asyncio.to_thread(exchange.set_leverage, leverage, symbol)
-                logger.info(f"[P0-FIX] Leverage set successfully: {symbol} {leverage}x (mode={margin_mode}, attempt {attempt + 1}/{max_retries})")
+                used_params = await _set_leverage_once(
+                    exchange,
+                    exchange_id,
+                    leverage,
+                    symbol,
+                    margin_mode,
+                    position_side,
+                )
+                pos_side = used_params.get("posSide") if used_params else None
+                logger.info(
+                    f"[P0-FIX] Leverage set successfully: {symbol} {leverage}x "
+                    f"(mode={margin_mode}, posSide={pos_side or 'net'}, "
+                    f"attempt {attempt + 1}/{max_retries})"
+                )
                 return {"success": True}
 
             except ccxt.AuthenticationError as e:
@@ -1256,6 +1312,11 @@ async def execute_trade(decision: TradeDecision, exchange_config: dict | None = 
 
     original_leverage = None
     leverage_changed = False
+    leverage_position_side = None
+    if decision.direction in [SignalDirection.LONG, SignalDirection.CLOSE_LONG]:
+        leverage_position_side = "long"
+    elif decision.direction in [SignalDirection.SHORT, SignalDirection.CLOSE_SHORT]:
+        leverage_position_side = "short"
     try:
         leverage = _effective_order_leverage(decision, exchange_config)
         if leverage:
@@ -1269,7 +1330,12 @@ async def execute_trade(decision: TradeDecision, exchange_config: dict | None = 
                     f"{symbol} market max is {int(market_max)}x. Using {leverage}x."
                 )
             # P0-FIX: Use retry mechanism for leverage setup
-            result = await _set_leverage_with_retry(exchange, leverage, symbol)
+            result = await _set_leverage_with_retry(
+                exchange,
+                leverage,
+                symbol,
+                position_side=leverage_position_side,
+            )
 
             if not result["success"]:
                 # Leverage setup failed
@@ -1342,7 +1408,12 @@ async def execute_trade(decision: TradeDecision, exchange_config: dict | None = 
                 )
                 try:
                     rollback_leverage = 1
-                    await _set_leverage_with_retry(exchange, rollback_leverage, symbol)
+                    await _set_leverage_with_retry(
+                        exchange,
+                        rollback_leverage,
+                        symbol,
+                        position_side=leverage_position_side,
+                    )
                     logger.info(f"[Exchange] Leverage rolled back to {rollback_leverage}x for {symbol}")
                 except Exception as rollback_exc:
                     logger.warning(

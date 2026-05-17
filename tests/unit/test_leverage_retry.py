@@ -184,6 +184,59 @@ class TestLeverageRetryMechanism:
         assert result["success"]
         assert mock_exchange.set_leverage.call_count == 3
 
+    async def test_okx_hedge_isolated_leverage_uses_position_side(self):
+        """OKX hedge mode requires posSide when setting isolated leverage."""
+        exchange = Mock()
+        exchange.id = "okx"
+        calls = []
+
+        def fake_set_leverage(leverage, symbol, params=None):
+            calls.append(dict(params or {}))
+            if (params or {}).get("tdMode") == "cross":
+                raise ccxt.ExchangeError('okx {"code":"1","data":[{"sCode":"51000","sMsg":"Parameter tdMode error"}]}')
+            if (params or {}).get("posSide") != "long":
+                raise ccxt.ExchangeError('okx {"code":"1","data":[{"sCode":"51000","sMsg":"Parameter posSide error"}]}')
+            return {"leverage": leverage}
+
+        exchange.set_leverage = Mock(side_effect=fake_set_leverage)
+
+        result = await _set_leverage_with_retry(
+            exchange,
+            leverage=10,
+            symbol="BTC/USDT:USDT",
+            max_retries=1,
+            position_side="long",
+        )
+
+        assert result["success"]
+        assert {"tdMode": "isolated", "posSide": "long"} in calls
+
+    async def test_okx_leverage_falls_back_without_position_side_for_net_mode(self):
+        """OKX one-way/net mode rejects posSide, so fallback without posSide should still work."""
+        exchange = Mock()
+        exchange.id = "okx"
+        calls = []
+
+        def fake_set_leverage(leverage, symbol, params=None):
+            calls.append(dict(params or {}))
+            if "posSide" in (params or {}):
+                raise ccxt.ExchangeError('okx {"code":"1","data":[{"sCode":"51000","sMsg":"Parameter posSide error"}]}')
+            return {"leverage": leverage}
+
+        exchange.set_leverage = Mock(side_effect=fake_set_leverage)
+
+        result = await _set_leverage_with_retry(
+            exchange,
+            leverage=5,
+            symbol="BTC/USDT:USDT",
+            max_retries=1,
+            position_side="short",
+        )
+
+        assert result["success"]
+        assert calls[0] == {"tdMode": "cross", "posSide": "short"}
+        assert calls[1] == {"tdMode": "cross"}
+
 
 @pytest.mark.asyncio
 class TestLeverageRetryIntegration:
@@ -227,6 +280,7 @@ class TestLeverageRetryIntegration:
 
                     # Verify retry mechanism called
                     mock_retry.assert_called_once()
+                    assert mock_retry.call_args.kwargs["position_side"] == "long"
 
 
 @pytest.mark.asyncio
