@@ -585,6 +585,67 @@ async def _has_active_duplicate_position(session: AsyncSession, position: Positi
     return any(position_symbol_key(row.ticker) == target_key for row in result.scalars().all())
 
 
+async def _close_missing_entry_order_without_exposure(
+    session: AsyncSession,
+    position: PositionModel,
+    exchange_config: dict,
+) -> bool:
+    """Close a stale DB entry when its entry order and exchange exposure are both gone."""
+    if not position.entry_order_id:
+        return False
+
+    try:
+        from exchange import fetch_single_position
+
+        exchange_pos = await fetch_single_position(
+            position.ticker,
+            {**exchange_config, "raise_on_error": True},
+        )
+    except Exception as exc:
+        logger.warning(
+            f"[PositionMonitor] Entry order {position.entry_order_id} not found for {position.ticker}, "
+            f"but single-position verification failed: {exc}. Leaving DB state unchanged."
+        )
+        return False
+
+    if (
+        exchange_pos is not None
+        and _exchange_position_side_matches_position(position, exchange_pos)
+        and _exchange_position_contracts(exchange_pos) > 0
+    ):
+        contracts = _sync_open_position_from_exchange(position, exchange_pos)
+        position.status = "open"
+        position.close_reason = ""
+        position.closed_at = None
+        logger.warning(
+            f"[PositionMonitor] Entry order {position.entry_order_id} not found for {position.ticker}, "
+            f"but exchange still reports {contracts} contracts. Synced DB position instead of closing."
+        )
+        await session.flush()
+        return False
+
+    now = utcnow()
+    position.status = "closed"
+    position.close_reason = "entry_order_not_found"
+    position.closed_at = now
+    position.updated_at = now
+    position.remaining_quantity = 0.0
+    position.unrealized_pnl_usdt = 0.0
+    fallback_price = safe_float(position.last_price or position.entry_price)
+    if fallback_price > 0:
+        position.exit_price = fallback_price
+    position.current_pnl_pct = safe_float(position.realized_pnl_pct)
+    position.pnl_pct = safe_float(position.realized_pnl_pct)
+    _GHOST_POSITION_TRACKER.pop(str(position.id), None)
+    _save_ghost_tracker()
+    await session.flush()
+    logger.warning(
+        f"[PositionMonitor] Closed stale DB position {position.id} for {position.ticker}: "
+        f"entry order {position.entry_order_id} is not on exchange and no matching exchange exposure exists."
+    )
+    return True
+
+
 async def _recover_ghost_closed_positions(session: AsyncSession, user_configs: dict) -> int:
     """Recover closed live positions that are still open on the exchange.
 
@@ -1302,9 +1363,11 @@ async def _check_pending_limit_orders(session, position: PositionModel, exchange
         finally:
             pass
     except ccxt.OrderNotFound:
+        if await _close_missing_entry_order_without_exposure(session, position, exchange_config):
+            return
         logger.warning(
             f"[PositionMonitor] Limit order not found on exchange for {position.ticker}; "
-            "leaving position state unchanged until reconciliation confirms no exchange exposure"
+            "leaving position state unchanged because exchange exposure could not be safely ruled out"
         )
     except ccxt.BaseError as e:
         logger.warning(f"[PositionMonitor] Exchange error checking limit order for {position.ticker}: {e}")
@@ -1579,6 +1642,9 @@ async def _reconcile_exchange_position(session, position: PositionModel, exchang
     stats = {"updated": 0, "partials": 0, "closed": 0, "adjusted": 0}
 
     await _check_pending_limit_orders(session, position, exchange_config)
+    if str(position.status or "").lower() == "closed":
+        stats["closed"] += 1
+        return stats
 
     checked_exchange_config = {**exchange_config, "raise_on_error": True}
     try:

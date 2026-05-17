@@ -534,6 +534,115 @@ async def test_reconcile_exchange_keeps_position_open_when_close_order_leaves_re
 
 
 @pytest.mark.asyncio
+async def test_reconcile_exchange_closes_missing_entry_order_without_exchange_exposure(monkeypatch):
+    import ccxt
+
+    position = PositionModel(
+        id="pos-missing-entry",
+        ticker="BTCUSDT",
+        direction="long",
+        status="open",
+        entry_price=100.0,
+        quantity=1.0,
+        remaining_quantity=1.0,
+        opened_at=utcnow(),
+        last_price=101.0,
+        entry_order_id="missing-entry",
+        order_type="limit",
+    )
+    _GHOST_POSITION_TRACKER[position.id] = {
+        "fail_count": 3,
+        "first_missing_at": utcnow(),
+        "last_check": utcnow(),
+    }
+
+    class FakeExchange:
+        def fetch_order(self, order_id, symbol):
+            raise ccxt.OrderNotFound(f"{order_id} not found")
+
+    async def fake_fetch_single_position(*args, **kwargs):
+        return None
+
+    open_positions = AsyncMock(return_value=[])
+
+    monkeypatch.setattr("exchange._get_or_create_exchange", lambda **kwargs: FakeExchange())
+    monkeypatch.setattr("exchange._resolve_symbol", lambda *args, **kwargs: "BTC/USDT:USDT")
+    monkeypatch.setattr("exchange.fetch_single_position", fake_fetch_single_position)
+    monkeypatch.setattr("exchange.get_open_positions", open_positions)
+
+    class FakeSession:
+        def __init__(self):
+            self.flush_count = 0
+
+        async def flush(self):
+            self.flush_count += 1
+
+    session = FakeSession()
+    stats = await _reconcile_exchange_position(session, position, {"live_trading": True, "market_type": "contract"})
+
+    assert stats["closed"] == 1
+    assert position.status == "closed"
+    assert position.close_reason == "entry_order_not_found"
+    assert position.remaining_quantity == 0.0
+    assert position.exit_price == 101.0
+    assert session.flush_count == 1
+    assert position.id not in _GHOST_POSITION_TRACKER
+    open_positions.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_entry_order_syncs_when_exchange_exposure_exists(monkeypatch):
+    import ccxt
+
+    position = PositionModel(
+        id="pos-missing-entry-live",
+        ticker="BTCUSDT",
+        direction="long",
+        status="open",
+        entry_price=100.0,
+        quantity=1.0,
+        remaining_quantity=1.0,
+        opened_at=utcnow(),
+        entry_order_id="missing-entry",
+        order_type="limit",
+    )
+
+    class FakeExchange:
+        def fetch_order(self, order_id, symbol):
+            raise ccxt.OrderNotFound(f"{order_id} not found")
+
+    async def fake_fetch_single_position(*args, **kwargs):
+        return {
+            "symbol": "BTC/USDT:USDT",
+            "side": "long",
+            "contracts": 0.4,
+            "entryPrice": 100.0,
+            "markPrice": 104.0,
+            "unrealizedPnl": 1.6,
+        }
+
+    monkeypatch.setattr("exchange._get_or_create_exchange", lambda **kwargs: FakeExchange())
+    monkeypatch.setattr("exchange._resolve_symbol", lambda *args, **kwargs: "BTC/USDT:USDT")
+    monkeypatch.setattr("exchange.fetch_single_position", fake_fetch_single_position)
+
+    class FakeSession:
+        def __init__(self):
+            self.flush_count = 0
+
+        async def flush(self):
+            self.flush_count += 1
+
+    session = FakeSession()
+    await _check_pending_limit_orders(session, position, {"live_trading": True, "market_type": "contract"})
+
+    assert position.status == "open"
+    assert position.remaining_quantity == pytest.approx(0.4)
+    assert position.last_price == pytest.approx(104.0)
+    assert position.close_reason in {None, ""}
+    assert session.flush_count == 1
+
+
+@pytest.mark.asyncio
 async def test_verify_protective_orders_places_missing_sl_and_tp_without_order_ids(monkeypatch):
     position = PositionModel(
         id="pos-missing-protection",
