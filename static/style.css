@@ -738,8 +738,9 @@ h1, h2, h3, h4, h5, h6 {
     background-size: 60px 60px;
 }
 
-/* Hide admin-only elements by default to prevent FOUC */
-.admin-only { display: none; }
+/* Hide role-gated elements by default to prevent FOUC */
+.admin-only,
+.user-only { display: none; }
 .admin-only[style*="display:"] { /* JS will override */ }
 .bg-glow { display: none; }
 
@@ -2312,3 +2313,212 @@ body {
 .btn-danger:hover { background: var(--accent-red); color: #fff; }
 .btn-warning:hover { background: var(--accent-orange); color: #fff; }
 .command-page .kpi-value { animation: none; }
+
+/* ── Admin console visual refresh ── */
+body[data-active-page="admin"] {
+    --bg-page: #f3f6fb;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f8fbff;
+    --bg-input: #ffffff;
+    --border: #dbe5f0;
+    --border-light: #b8c7da;
+    --text-primary: #101828;
+    --text-secondary: #475467;
+    --text-muted: #7c8a9e;
+    --accent-blue: #1f5eff;
+    --accent-blue-bg: rgba(31, 94, 255, 0.09);
+    --accent-green: #047857;
+    --accent-green-bg: rgba(4, 120, 87, 0.10);
+    --accent-orange: #b45309;
+    --accent-orange-bg: rgba(180, 83, 9, 0.10);
+    --accent-red: #be123c;
+    --accent-red-bg: rgba(190, 18, 60, 0.10);
+    --accent-purple: #6d28d9;
+    --accent-purple-bg: rgba(109, 40, 217, 0.10);
+}
+
+body[data-active-page="admin"] .main-content {
+    background: linear-gradient(180deg, #f8fbff 0, #f3f6fb 280px, #eef3f8 100%);
+}
+
+body[data-active-page="admin"] .sidebar {
+    background: #0f172a;
+    border-right-color: rgba(148, 163, 184, 0.20);
+}
+
+body[data-active-page="admin"] .sidebar-logo {
+    color: #f8fafc;
+    border-bottom-color: rgba(148, 163, 184, 0.18);
+}
+
+body[data-active-page="admin"] .sidebar-logo i {
+    background: rgba(45, 212, 191, 0.14);
+    color: #5eead4;
+    -webkit-text-fill-color: currentColor;
+}
+
+body[data-active-page="admin"] .sidebar-footer {
+    border-top-color: rgba(148, 163, 184, 0.18);
+}
+
+body[data-active-page="admin"] .server-status,
+body[data-active-page="admin"] .nav-item {
+    color: #a8b3c7;
+}
+
+body[data-active-page="admin"] .nav-item:hover {
+    background: rgba(148, 163, 184, 0.12);
+    color: #f8fafc;
+}
+
+body[data-active-page="admin"] .nav-item.active {
+    background: linear-gradient(135deg, rgba(20, 184, 166, 0.22), rgba(31, 94, 255, 0.20));
+    border-color: rgba(94, 234, 212, 0.26);
+    color: #ffffff;
+}
+
+body[data-active-page="admin"] .header {
+    background: rgba(248, 251, 255, 0.95);
+    border-bottom-color: rgba(184, 199, 218, 0.78);
+    box-shadow: 0 8px 28px rgba(16, 24, 40, 0.06);
+}
+
+body[data-active-page="admin"] #page-admin .page-intro {
+    overflow: hidden;
+    border-color: rgba(15, 23, 42, 0.12);
+    background: linear-gradient(135deg, #0f172a 0%, #12304a 56%, #0f766e 100%);
+    color: #ffffff;
+    box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+}
+
+body[data-active-page="admin"] #page-admin .page-intro h2 {
+    color: #ffffff;
+}
+
+body[data-active-page="admin"] #page-admin .page-intro p {
+    color: #d9e4f2;
+}
+
+body[data-active-page="admin"] #page-admin .page-intro .section-kicker {
+    color: #99f6e4;
+}
+
+body[data-active-page="admin"] #page-admin .card {
+    border-color: rgba(184, 199, 218, 0.72);
+    background: #ffffff;
+    box-shadow: 0 12px 32px rgba(16, 24, 40, 0.08);
+}
+
+body[data-active-page="admin"] #page-admin .card:hover {
+    border-color: rgba(31, 94, 255, 0.22);
+    box-shadow: 0 16px 38px rgba(16, 24, 40, 0.11);
+}
+
+body[data-active-page="admin"] #page-admin .card-header {
+    background: linear-gradient(180deg, #fbfdff 0%, #f5f8fc 100%);
+    border-bottom-color: rgba(219, 229, 240, 0.95);
+}
+
+body[data-active-page="admin"] #page-admin .card-header h3 i {
+    color: var(--accent-blue);
+}
+
+body[data-active-page="admin"] #page-admin .ops-primary {
+    border-color: rgba(31, 94, 255, 0.22);
+}
+
+body[data-active-page="admin"] #page-admin .ops-secondary {
+    border-color: rgba(20, 184, 166, 0.22);
+}
+
+body[data-active-page="admin"] #page-admin .control-state,
+body[data-active-page="admin"] #page-admin .order-event,
+body[data-active-page="admin"] #page-admin .settings-form,
+body[data-active-page="admin"] #page-admin .admin-address-row,
+body[data-active-page="admin"] #page-admin .template-card,
+body[data-active-page="admin"] #page-admin .payment-network-option {
+    background: #f8fbff;
+    border: 1px solid rgba(219, 229, 240, 0.95);
+    border-radius: var(--radius-sm);
+}
+
+body[data-active-page="admin"] #page-admin .control-state span,
+body[data-active-page="admin"] #page-admin .metric-label,
+body[data-active-page="admin"] #page-admin .form-group label {
+    color: #667085;
+}
+
+body[data-active-page="admin"] #page-admin .control-state strong,
+body[data-active-page="admin"] #page-admin .metric-value {
+    color: #101828;
+}
+
+body[data-active-page="admin"] #page-admin .table-wrapper {
+    border-color: rgba(219, 229, 240, 0.95);
+    background: #ffffff;
+}
+
+body[data-active-page="admin"] #page-admin .data-table th {
+    color: #667085;
+    background: #f2f6fb;
+    border-bottom-color: rgba(184, 199, 218, 0.72);
+    letter-spacing: 0.04em;
+}
+
+body[data-active-page="admin"] #page-admin .data-table td {
+    border-bottom-color: rgba(219, 229, 240, 0.86);
+    color: #344054;
+}
+
+body[data-active-page="admin"] #page-admin .data-table tbody tr:hover {
+    background: rgba(31, 94, 255, 0.04);
+    box-shadow: none;
+    transform: none;
+}
+
+body[data-active-page="admin"] #page-admin .text-input,
+body[data-active-page="admin"] #page-admin .select-input,
+body[data-active-page="admin"] #page-admin textarea {
+    border-color: rgba(184, 199, 218, 0.86);
+    background-color: #ffffff;
+    color: #101828;
+    box-shadow: none;
+}
+
+body[data-active-page="admin"] #page-admin .text-input:focus,
+body[data-active-page="admin"] #page-admin .select-input:focus,
+body[data-active-page="admin"] #page-admin textarea:focus {
+    border-color: var(--accent-blue);
+    background-color: #ffffff;
+    box-shadow: 0 0 0 3px rgba(31, 94, 255, 0.12);
+}
+
+body[data-active-page="admin"] #page-admin .code-template,
+body[data-active-page="admin"] #page-admin code {
+    background: #eef4ff;
+    color: #173b79;
+    border-color: rgba(31, 94, 255, 0.12);
+}
+
+body[data-active-page="admin"] #page-admin .btn {
+    box-shadow: none;
+}
+
+body[data-active-page="admin"] #page-admin .btn-primary {
+    background: linear-gradient(135deg, #0f766e, #1f5eff);
+    border-color: rgba(31, 94, 255, 0.28);
+    color: #ffffff;
+}
+
+body[data-active-page="admin"] #page-admin .btn:not(.btn-primary):not(.btn-success):not(.btn-warning):not(.btn-danger) {
+    background: #ffffff;
+    color: #344054;
+    border-color: rgba(184, 199, 218, 0.9);
+}
+
+body:not([data-role]) .admin-only,
+body:not([data-role]) .user-only,
+body[data-role="admin"] .user-only,
+body[data-role="user"] .admin-only {
+    display: none !important;
+}

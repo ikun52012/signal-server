@@ -34,9 +34,7 @@ from core.database import (
     get_admin_setting,
     get_all_users,
     get_db,
-    get_user_by_email,
     get_user_by_id,
-    get_user_by_username,
     set_admin_setting,
     update_user_password_hash,
 )
@@ -179,9 +177,34 @@ def _validate_subscription_status(status: str) -> str:
     return status
 
 
+async def _get_user_by_username_any(db: AsyncSession, username: str) -> UserModel | None:
+    result = await db.execute(
+        select(UserModel).where(UserModel.username == str(username or "").lower().strip())
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_user_by_email_any(db: AsyncSession, email: str) -> UserModel | None:
+    result = await db.execute(
+        select(UserModel).where(UserModel.email == str(email or "").lower().strip())
+    )
+    return result.scalar_one_or_none()
+
+
+def _raise_if_deleted(user: UserModel) -> None:
+    if user.deleted_at is not None:
+        raise HTTPException(400, "User is deleted. Restore the account before changing it")
+
+
 async def _admin_count(db: AsyncSession) -> int:
     result = await db.execute(
-        select(func.count()).select_from(UserModel).where(UserModel.role == "admin")
+        select(func.count())
+        .select_from(UserModel)
+        .where(
+            UserModel.role == "admin",
+            UserModel.is_active.is_(True),
+            UserModel.deleted_at.is_(None),
+        )
     )
     return int(result.scalar() or 0)
 
@@ -251,13 +274,16 @@ async def create_user(
 ):
     """Create a new user from admin panel."""
     from core.database import create_user as db_create_user
-    from core.database import get_user_by_email, get_user_by_username
 
-    # Check for existing
-    if await get_user_by_username(db, req.username):
-        raise HTTPException(400, "Username already exists")
-    if await get_user_by_email(db, req.email):
-        raise HTTPException(400, "Email already registered")
+    # Check for existing, including soft-deleted rows that still hold unique keys.
+    existing_username = await _get_user_by_username_any(db, req.username)
+    if existing_username:
+        detail = "Username belongs to a deleted account. Restore it before reusing this username" if existing_username.deleted_at else "Username already exists"
+        raise HTTPException(400, detail)
+    existing_email = await _get_user_by_email_any(db, req.email)
+    if existing_email:
+        detail = "Email belongs to a deleted account. Restore it before reusing this email" if existing_email.deleted_at else "Email already registered"
+        raise HTTPException(400, detail)
     ok, reason = validate_password_strength(req.password, username=req.username, email=req.email)
     if not ok:
         raise HTTPException(400, reason)
@@ -300,22 +326,26 @@ async def update_user(
     user = await get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(404, "User not found")
+    _raise_if_deleted(user)
 
     # Check for conflicts
     if user.username != req.username:
-        existing = await get_user_by_username(db, req.username)
-        if existing:
-            raise HTTPException(400, "Username already exists")
+        existing = await _get_user_by_username_any(db, req.username)
+        if existing and existing.id != user.id:
+            detail = "Username belongs to a deleted account. Restore it before reusing this username" if existing.deleted_at else "Username already exists"
+            raise HTTPException(400, detail)
 
     if user.email != req.email:
-        existing = await get_user_by_email(db, req.email)
-        if existing:
-            raise HTTPException(400, "Email already registered")
+        existing = await _get_user_by_email_any(db, req.email)
+        if existing and existing.id != user.id:
+            detail = "Email belongs to a deleted account. Restore it before reusing this email" if existing.deleted_at else "Email already registered"
+            raise HTTPException(400, detail)
 
     new_role = _validate_role(req.role)
-    if user.role == "admin" and new_role != "admin" and await _admin_count(db) <= 1:
+    is_active_admin = user.role == "admin" and bool(user.is_active)
+    if is_active_admin and new_role != "admin" and await _admin_count(db) <= 1:
         raise HTTPException(400, "Cannot demote the last admin account")
-    if user.role == "admin" and not req.is_active and await _admin_count(db) <= 1:
+    if is_active_admin and not req.is_active and await _admin_count(db) <= 1:
         raise HTTPException(400, "Cannot disable the last admin account")
     if user.id == admin.get("sub") and (new_role != "admin" or not req.is_active):
         raise HTTPException(400, "Use another admin account to change your own admin access")
@@ -376,7 +406,7 @@ async def delete_user(
         raise HTTPException(400, "Use another admin account to delete your own user")
 
     # Prevent deleting last admin
-    if user.role == "admin":
+    if user.role == "admin" and bool(user.is_active):
         if await _admin_count(db) <= 1:
             raise HTTPException(400, "Cannot delete the last admin account")
 
@@ -437,6 +467,7 @@ async def toggle_user(
     user = await get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(404, "User not found")
+    _raise_if_deleted(user)
     if user.role == "admin" and (user.id == admin.get("sub") or await _admin_count(db) <= 1):
         raise HTTPException(400, "Admin accounts must be updated explicitly from another admin account")
     user.is_active = not bool(user.is_active)
@@ -458,6 +489,7 @@ async def set_user_password(
     user = await get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(404, "User not found")
+    _raise_if_deleted(user)
     ok, reason = validate_password_strength(req.password, username=user.username, email=user.email)
     if not ok:
         raise HTTPException(400, reason)
@@ -479,6 +511,7 @@ async def grant_user_subscription(
     user = await get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(404, "User not found")
+    _raise_if_deleted(user)
     plan = await db.get(SubscriptionPlanModel, req.plan_id)
     if not plan:
         raise HTTPException(404, "Plan not found")
@@ -517,6 +550,7 @@ async def reset_user_password(
     user = await get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(404, "User not found")
+    _raise_if_deleted(user)
 
     new_password = secrets.token_urlsafe(12)
     pw_hash = hash_password(new_password)

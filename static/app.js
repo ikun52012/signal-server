@@ -21,6 +21,18 @@ let _priceSocket = null;
 let _priceSocketTicker = '';
 let _chartRealtimeState = null;
 let _launchContext = null;
+const ADMIN_NAV_PAGES = new Set([
+    'dashboard',
+    'positions',
+    'history',
+    'analytics',
+    'settings',
+    'admin',
+    'backtest',
+    'strategies',
+    'strategy-editor',
+]);
+const USER_ONLY_PAGES = new Set(['user', 'social']);
 
 // ─── i18n / Multi-language Support ───
 let _i18nCache = {};
@@ -308,6 +320,10 @@ function applyProtocolLaunchContext() {
     clearLaunchQuery();
 }
 
+function roleVisibleDisplay(el) {
+    return el.classList.contains('nav-item') ? 'flex' : 'block';
+}
+
 function setupSpotlight() {
     document.addEventListener('mousemove', e => {
         document.querySelectorAll('.card, .chart-card, .kpi-card, .plan-card, .option-card').forEach(card => {
@@ -322,6 +338,8 @@ function setupSpotlight() {
 
 function updateUserUI() {
     const user = getUser();
+    const admin = isAdmin();
+    document.body.dataset.role = admin ? 'admin' : 'user';
     const usernameEl = document.getElementById('user-display-name');
     if (usernameEl) usernameEl.textContent = user.username || 'User';
     const roleEl = document.getElementById('user-role-badge');
@@ -330,15 +348,16 @@ function updateUserUI() {
         roleEl.className = `role-badge ${user.role === 'admin' ? 'admin' : 'user'}`;
     }
     document.querySelectorAll('.admin-only').forEach(el => {
-        el.style.display = isAdmin() ? '' : 'none';
+        el.style.display = admin ? roleVisibleDisplay(el) : 'none';
     });
     document.querySelectorAll('.user-only').forEach(el => {
-        el.style.display = ''; // user-only items always visible (My Trading)
+        el.style.display = admin ? 'none' : roleVisibleDisplay(el);
     });
-    // Hide advanced pages from regular users
-    ['dashboard','positions','history','analytics','settings','strategies','strategy-editor','social'].forEach(page => {
+    ADMIN_NAV_PAGES.forEach(page => {
         const el = document.querySelector(`.nav-item[data-page="${page}"]`);
-        if (el && !isAdmin()) el.style.display = 'none';
+        if (el && !el.classList.contains('admin-only')) {
+            el.style.display = admin ? roleVisibleDisplay(el) : 'none';
+        }
     });
 }
 
@@ -542,11 +561,18 @@ function closeSidebar() {
     document.getElementById('sidebar-overlay')?.classList.remove('visible');
 }
 
+function normalizePageForRole(page) {
+    const fallback = isAdmin() ? 'dashboard' : 'user';
+    if (!page || !document.getElementById(`page-${page}`)) return fallback;
+    if (isAdmin() && USER_ONLY_PAGES.has(page)) return fallback;
+    if (!isAdmin() && ADMIN_NAV_PAGES.has(page)) return fallback;
+    return page;
+}
+
 function switchPage(page) {
-    // Block non-admin from admin-only pages
-    if (!isAdmin() && (page === 'backtest' || page === 'admin' || page === 'settings' || page === 'dashboard' || page === 'positions' || page === 'history' || page === 'analytics' || page === 'strategies' || page === 'strategy-editor' || page === 'social')) {
-        page = 'user';
-    }
+    page = normalizePageForRole(page);
+    document.body.dataset.activePage = page;
+    document.body.dataset.role = isAdmin() ? 'admin' : 'user';
     document.querySelectorAll('.nav-item').forEach(n => { n.classList.remove('active'); n.removeAttribute('aria-current'); });
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     const navEl = document.querySelector(`[data-page="${page}"]`);
