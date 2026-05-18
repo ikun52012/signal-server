@@ -1827,6 +1827,66 @@ async def _reconcile_exchange_position(session, position: PositionModel, exchang
                             f"has EXCEEDED timeout (age={age_secs:.0f}s > timeout={limit_timeout}s)."
                         )
 
+            # P0-FIX: Before closing DB position, cancel any orphaned entry order on exchange.
+            # This fixes the XPL/USDT bug where Ghost detection closed DB position but left
+            # the exchange limit order alive.
+            if position.entry_order_id and str(position.entry_order_id or "").strip():
+                try:
+                    from exchange import _get_or_create_exchange, _resolve_symbol
+
+                    exchange = _get_or_create_exchange(
+                        exchange_id=exchange_config.get("exchange", settings.exchange.name),
+                        api_key=exchange_config.get("api_key", settings.exchange.api_key),
+                        api_secret=exchange_config.get("api_secret", settings.exchange.api_secret),
+                        password=exchange_config.get("password", settings.exchange.password),
+                        live=bool(exchange_config.get("live_trading", False)),
+                        sandbox=bool(exchange_config.get("sandbox_mode", False)),
+                        market_type=exchange_config.get("market_type", settings.exchange.market_type),
+                    )
+                    symbol = await asyncio.to_thread(
+                        _resolve_symbol,
+                        exchange,
+                        position.ticker,
+                        exchange_config.get("market_type", settings.exchange.market_type),
+                    )
+                    order = await asyncio.to_thread(exchange.fetch_order, position.entry_order_id, symbol)
+                    order_status = str(order.get("status") or "").lower()
+
+                    if order_status in {"open", "new", "partially_filled"}:
+                        logger.warning(
+                            f"[P0-FIX] Closing DB position {position.id[:8]} for {position.ticker} but found "
+                            f"active entry order {position.entry_order_id} on exchange (status={order_status}). "
+                            f"Cancelling to prevent orphaned order."
+                        )
+                        try:
+                            await asyncio.to_thread(exchange.cancel_order, position.entry_order_id, symbol)
+                            logger.info(
+                                f"[P0-FIX] Successfully cancelled orphaned entry order "
+                                f"{position.entry_order_id} for {position.ticker}"
+                            )
+                        except ccxt.OrderNotFound:
+                            logger.info(
+                                f"[P0-FIX] Entry order {position.entry_order_id} already gone from exchange"
+                            )
+                        except Exception as cancel_exc:
+                            logger.warning(
+                                f"[P0-FIX] Failed to cancel entry order {position.entry_order_id}: {cancel_exc}"
+                            )
+                    else:
+                        logger.info(
+                            f"[P0-FIX] Entry order {position.entry_order_id} for {position.ticker} "
+                            f"is already {order_status}, no cancel needed"
+                        )
+                except ccxt.OrderNotFound:
+                    logger.info(
+                        f"[P0-FIX] Entry order {position.entry_order_id} for {position.ticker} "
+                        f"not found on exchange, no cancel needed"
+                    )
+                except Exception as order_exc:
+                    logger.warning(
+                        f"[P0-FIX] Failed to check entry order {position.entry_order_id}: {order_exc}"
+                    )
+
             await _close_db_position_without_exchange_exposure(
                 session,
                 position,
@@ -1987,6 +2047,68 @@ async def _reconcile_exchange_position(session, position: PositionModel, exchang
                     f"deferring close to next cycle"
                 )
                 return stats
+
+            # P0-FIX: Before Ghost-closing, check if there's a pending entry order on the
+            # exchange that needs to be cancelled. The XPL/USDT bug showed that Ghost
+            # detection was closing DB positions while leaving exchange limit orders alive.
+            if position.entry_order_id and str(position.entry_order_id or "").strip():
+                try:
+                    from exchange import _get_or_create_exchange, _resolve_symbol
+
+                    exchange = _get_or_create_exchange(
+                        exchange_id=exchange_config.get("exchange", settings.exchange.name),
+                        api_key=exchange_config.get("api_key", settings.exchange.api_key),
+                        api_secret=exchange_config.get("api_secret", settings.exchange.api_secret),
+                        password=exchange_config.get("password", settings.exchange.password),
+                        live=bool(exchange_config.get("live_trading", False)),
+                        sandbox=bool(exchange_config.get("sandbox_mode", False)),
+                        market_type=exchange_config.get("market_type", settings.exchange.market_type),
+                    )
+                    symbol = await asyncio.to_thread(
+                        _resolve_symbol,
+                        exchange,
+                        position.ticker,
+                        exchange_config.get("market_type", settings.exchange.market_type),
+                    )
+                    order = await asyncio.to_thread(exchange.fetch_order, position.entry_order_id, symbol)
+                    order_status = str(order.get("status") or "").lower()
+
+                    if order_status in {"open", "new", "partially_filled"}:
+                        logger.warning(
+                            f"[P0-FIX] Ghost position {position.id[:8]} has active entry order "
+                            f"{position.entry_order_id} on exchange (status={order_status}). "
+                            f"Cancelling before Ghost close to prevent orphaned order."
+                        )
+                        try:
+                            await asyncio.to_thread(exchange.cancel_order, position.entry_order_id, symbol)
+                            logger.info(
+                                f"[P0-FIX] Successfully cancelled orphaned entry order "
+                                f"{position.entry_order_id} for {position.ticker}"
+                            )
+                        except ccxt.OrderNotFound:
+                            logger.info(
+                                f"[P0-FIX] Entry order {position.entry_order_id} already gone from exchange"
+                            )
+                        except Exception as cancel_exc:
+                            logger.warning(
+                                f"[P0-FIX] Failed to cancel entry order {position.entry_order_id}: {cancel_exc}. "
+                                f"Proceeding with Ghost close anyway."
+                            )
+                    else:
+                        logger.info(
+                            f"[P0-FIX] Ghost position {position.id[:8]} entry order {position.entry_order_id} "
+                            f"is already {order_status} on exchange, no cancel needed"
+                        )
+                except ccxt.OrderNotFound:
+                    logger.info(
+                        f"[P0-FIX] Ghost position {position.id[:8]} entry order {position.entry_order_id} "
+                        f"not found on exchange, no cancel needed"
+                    )
+                except Exception as order_exc:
+                    logger.warning(
+                        f"[P0-FIX] Failed to check entry order {position.entry_order_id} for Ghost position: "
+                        f"{order_exc}. Proceeding with Ghost close."
+                    )
 
             await record_position_close_trade_async(
                 session=session,
