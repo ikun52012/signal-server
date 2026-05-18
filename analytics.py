@@ -342,7 +342,33 @@ def _calculate_consecutive(pnls: list[float]) -> tuple[int, int]:
 
 
 async def _calculate_ai_stats(trades: list[Any]) -> dict[str, float | int]:
-    """Calculate AI performance statistics."""
+    """Calculate AI performance statistics.
+    
+    Strategy:
+    - Open/entry trades contain analysis.confidence in payload_json
+    - Close trades contain open_trade_id in payload_json (linking to the entry trade)
+    - We build a confidence map from entry trades, then match with close trades
+      to correlate AI confidence with actual PnL outcomes.
+    """
+    # Pass 1: Build trade_id -> confidence map from entry trades
+    confidence_map: dict[str, float] = {}
+    for trade in trades:
+        try:
+            payload_raw = json.loads(getattr(trade, "payload_json", "") or "") if getattr(trade, "payload_json", "") else {}
+            if not isinstance(payload_raw, dict):
+                continue
+            analysis = payload_raw.get("analysis", {})
+            if not isinstance(analysis, dict):
+                continue
+            confidence = analysis.get("confidence")
+            if confidence is not None:
+                trade_id = getattr(trade, "id", "")
+                if trade_id:
+                    confidence_map[trade_id] = float(confidence)
+        except (TypeError, json.JSONDecodeError, ValueError):
+            pass
+
+    # Pass 2: Match close trades with their entry trade confidence
     high_conf_trades: list[float] = []
     low_conf_trades: list[float] = []
     all_confidences: list[float] = []
@@ -350,26 +376,58 @@ async def _calculate_ai_stats(trades: list[Any]) -> dict[str, float | int]:
     for trade in trades:
         if not _is_closed_trade(trade):
             continue
+
+        pnl_value = float(getattr(trade, "pnl_pct", 0.0) or 0.0)
+        confidence_value = None
+
         try:
-            payload_raw = json.loads(getattr(trade, "payload_json", "")) if getattr(trade, "payload_json", "") else {}
-            if not isinstance(payload_raw, dict):
-                continue
-            analysis = payload_raw.get("analysis", {})
-            if not isinstance(analysis, dict):
-                continue
-            confidence = analysis.get("confidence")
+            payload_raw = json.loads(getattr(trade, "payload_json", "") or "") if getattr(trade, "payload_json", "") else {}
+            if isinstance(payload_raw, dict):
+                # Method 1: Direct analysis in close trade payload (rare but possible)
+                analysis = payload_raw.get("analysis", {})
+                if isinstance(analysis, dict) and analysis.get("confidence") is not None:
+                    confidence_value = float(analysis["confidence"])
 
-            if confidence is not None:
-                confidence_value = float(confidence)
-                all_confidences.append(confidence_value)
+                # Method 2: Link via open_trade_id to entry trade confidence
+                if confidence_value is None:
+                    open_trade_id = payload_raw.get("open_trade_id")
+                    if open_trade_id and open_trade_id in confidence_map:
+                        confidence_value = confidence_map[open_trade_id]
 
-                pnl_value = float(getattr(trade, "pnl_pct", 0.0) or 0.0)
-                if confidence_value >= 0.7:
-                    high_conf_trades.append(pnl_value)
-                elif confidence_value < 0.5:
-                    low_conf_trades.append(pnl_value)
+                # Method 3: Link via position_id to find entry trade
+                if confidence_value is None:
+                    position_id = payload_raw.get("position_id")
+                    if position_id:
+                        for t2 in trades:
+                            try:
+                                p2 = json.loads(getattr(t2, "payload_json", "") or "") if getattr(t2, "payload_json", "") else {}
+                                if isinstance(p2, dict) and p2.get("position_id") == position_id:
+                                    a2 = p2.get("analysis", {})
+                                    if isinstance(a2, dict) and a2.get("confidence") is not None:
+                                        confidence_value = float(a2["confidence"])
+                                        break
+                            except (TypeError, json.JSONDecodeError, ValueError):
+                                continue
         except (TypeError, json.JSONDecodeError, ValueError):
             pass
+
+        # Also check if the trade itself has confidence at the top level
+        if confidence_value is None:
+            try:
+                payload_raw = json.loads(getattr(trade, "payload_json", "") or "") if getattr(trade, "payload_json", "") else {}
+                if isinstance(payload_raw, dict):
+                    direct_conf = payload_raw.get("confidence")
+                    if direct_conf is not None:
+                        confidence_value = float(direct_conf)
+            except (TypeError, json.JSONDecodeError, ValueError):
+                pass
+
+        if confidence_value is not None:
+            all_confidences.append(confidence_value)
+            if confidence_value >= 0.7:
+                high_conf_trades.append(pnl_value)
+            elif confidence_value < 0.5:
+                low_conf_trades.append(pnl_value)
 
     def win_rate(trade_list: list[float]) -> float:
         if not trade_list:
