@@ -1432,7 +1432,18 @@ async def execute_trade(decision: TradeDecision, exchange_config: dict | None = 
             }
         order_id = str(order_id)
         raw_status = order.get("status")
-        order_status = raw_status if raw_status is not None else "open"
+        # P0-FIX: For limit orders, status=None means "not yet filled" (pending),
+        # NOT "open/filled". OKX Sandbox returns None for unfilled limit orders.
+        # Treating None as "open" caused Ghost Position detection to trigger
+        # prematurely, killing limit orders before their timeout expired.
+        if raw_status is None and order_type == "limit":
+            order_status = "open"  # CCXT convention: open = waiting to fill
+            logger.info(f"[Exchange] OKX sandbox returned status=None for limit order {order_id}, treating as 'open' (pending fill)")
+        elif raw_status is None:
+            order_status = "open"
+            logger.warning(f"[Exchange] Order {order_id} returned status=None (type={order_type}), treating as 'open'")
+        else:
+            order_status = raw_status
         actual_filled_qty = safe_float(order.get("filled") or 0)
         if raw_status is None and order_type == "limit":
             logger.info(f"[Exchange] OKX sandbox returned status=None for limit order {order_id}, treating as 'open' (pending)")

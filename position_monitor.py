@@ -1152,9 +1152,15 @@ async def _check_pending_limit_orders(session, position: PositionModel, exchange
             order = await asyncio.to_thread(exchange.fetch_order, position.entry_order_id, symbol)
 
             raw_status = order.get("status")
-            order_status = str(raw_status if raw_status is not None else "open").lower()
+            # P0-FIX: For limit orders, status=None means "not yet filled" (pending),
+            # NOT "open/filled". OKX Sandbox returns None for unfilled limit orders.
+            # Treating None as "open" caused Ghost Position detection to trigger
+            # prematurely, killing limit orders before their timeout expired.
             if raw_status is None:
-                logger.info(f"[PositionMonitor] OKX sandbox returned status=None for order {position.entry_order_id}, treating as 'open'")
+                order_status = "open"  # CCXT convention: open = waiting to fill
+                logger.info(f"[PositionMonitor] OKX sandbox returned status=None for order {position.entry_order_id}, treating as 'open' (pending fill)")
+            else:
+                order_status = str(raw_status).lower()
 
             if order_status in {"closed", "filled"}:
                 # P0-FIX: Prevent re-processing an already-consumed filled order.
@@ -1794,6 +1800,33 @@ async def _reconcile_exchange_position(session, position: PositionModel, exchang
                     stats["updated"] += 1
                 return stats
 
+            # P0-FIX: Even if status is not "pending", check if there's a pending limit order
+            # that hasn't timed out yet. Don't close the position if the order is still valid.
+            if position.entry_order_id and str(position.entry_order_id or "").strip():
+                limit_timeout = _position_limit_timeout_secs(position)
+                opened_at = position.opened_at
+                if opened_at:
+                    if opened_at.tzinfo is None:
+                        opened_at = opened_at.replace(tzinfo=timezone.utc)
+                    age_secs = (utcnow() - opened_at).total_seconds()
+                    if age_secs < limit_timeout:
+                        logger.info(
+                            f"[P0-FIX] Position {position.ticker} (status={position.status}) has pending limit order "
+                            f"{position.entry_order_id} (age={age_secs:.0f}s < timeout={limit_timeout}s). "
+                            f"Keeping position open — order may still fill."
+                        )
+                        ticker = await get_ticker(position.ticker, exchange_config)
+                        mark_price = safe_float(ticker.get("last") or position.last_price)
+                        if mark_price > 0:
+                            _update_unrealized(position, mark_price)
+                            stats["updated"] += 1
+                        return stats
+                    else:
+                        logger.info(
+                            f"[P0-FIX] Position {position.ticker} limit order {position.entry_order_id} "
+                            f"has EXCEEDED timeout (age={age_secs:.0f}s > timeout={limit_timeout}s)."
+                        )
+
             await _close_db_position_without_exchange_exposure(
                 session,
                 position,
@@ -1841,6 +1874,35 @@ async def _reconcile_exchange_position(session, position: PositionModel, exchang
                 _update_unrealized(position, mark_price)
                 stats["updated"] += 1
             return stats
+
+        # P0-FIX: Before incrementing ghost counter, check if this position has a
+        # pending limit order that hasn't timed out yet. Ghost detection should NOT
+        # trigger for pending limit orders — the order may still fill.
+        if position.entry_order_id and str(position.entry_order_id or "").strip():
+            limit_timeout = _position_limit_timeout_secs(position)
+            opened_at = position.opened_at
+            if opened_at:
+                if opened_at.tzinfo is None:
+                    opened_at = opened_at.replace(tzinfo=timezone.utc)
+                age_secs = (utcnow() - opened_at).total_seconds()
+                if age_secs < limit_timeout:
+                    logger.info(
+                        f"[P0-FIX] Position {position.ticker} has pending limit order {position.entry_order_id} "
+                        f"(age={age_secs:.0f}s < timeout={limit_timeout}s). "
+                        f"Skipping ghost detection — order may still fill."
+                    )
+                    ticker = await get_ticker(position.ticker, exchange_config)
+                    mark_price = safe_float(ticker.get("last") or position.last_price)
+                    if mark_price > 0:
+                        _update_unrealized(position, mark_price)
+                        stats["updated"] += 1
+                    return stats
+                else:
+                    logger.info(
+                        f"[P0-FIX] Position {position.ticker} limit order {position.entry_order_id} "
+                        f"has EXCEEDED timeout (age={age_secs:.0f}s > timeout={limit_timeout}s). "
+                        f"Proceeding with ghost detection."
+                    )
 
         # Only increment ghost counter when BOTH batch list and single-fetch confirm
         # the position is not on the exchange. This is the only safe path to +1.
