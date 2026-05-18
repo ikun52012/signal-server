@@ -28,6 +28,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+        timeout-minutes: 5
 
       - name: Extract Docker metadata
         id: meta_app
@@ -48,6 +49,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta_app.outputs.tags }}
           labels: ${{ steps.meta_app.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   publish-updater:
     runs-on: ubuntu-latest
@@ -67,6 +70,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+        timeout-minutes: 5
 
       - name: Extract updater metadata
         id: meta_updater
@@ -87,3 +91,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta_updater.outputs.tags }}
           labels: ${{ steps.meta_updater.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
