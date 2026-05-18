@@ -21,7 +21,7 @@ async def calculate_performance(
 ) -> dict[str, Any]:
     """
     Calculate comprehensive performance metrics.
-    
+
     Uses mainstream quantitative finance methodology:
     - Sharpe/Sortino: Annualized based on actual trades-per-day frequency
     - Max Drawdown: Peak-to-trough percentage decline from equity high
@@ -272,7 +272,7 @@ def _is_closed_trade(trade: Any) -> bool:
 
 def _calculate_equity_curve(pnls: list[float]) -> list[dict[str, float | int]]:
     """Calculate cumulative equity curve from trade PnL percentages.
-    
+
     Returns a list of dicts with trade number, per-trade PnL,
     and cumulative PnL for chart rendering.
     """
@@ -290,7 +290,7 @@ def _calculate_equity_curve(pnls: list[float]) -> list[dict[str, float | int]]:
 
 def _calculate_max_drawdown(equity_curve: list[dict[str, float | int]]) -> float:
     """Calculate maximum drawdown percentage from equity curve.
-    
+
     Uses the standard quant formula: max(peak - trough) / peak * 100.
     Returns the peak-to-trough decline as a percentage of the peak.
     """
@@ -343,7 +343,7 @@ def _calculate_consecutive(pnls: list[float]) -> tuple[int, int]:
 
 async def _calculate_ai_stats(trades: list[Any]) -> dict[str, float | int]:
     """Calculate AI performance statistics.
-    
+
     Strategy:
     - Open/entry trades contain analysis.confidence in payload_json
     - Close trades contain open_trade_id in payload_json (linking to the entry trade)
