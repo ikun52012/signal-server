@@ -1339,9 +1339,16 @@ class SignalProcessor:
         min_tp_pct = self._get_min_tp_percentage(atr_pct, user_settings or {}, timeframe)
         max_tp_pct = get_max_tp_for_timeframe(timeframe)
 
-        # Get min R:R ratio from settings
+        # Get min R:R ratio from settings or derive from ai_risk_profile
         risk_cfg = (user_settings or {}).get("risk") or {}
-        min_rr_ratio = safe_float(risk_cfg.get("min_risk_reward_ratio"), 1.5)
+        if risk_cfg.get("min_risk_reward_ratio") is not None:
+            min_rr_ratio = safe_float(risk_cfg.get("min_risk_reward_ratio"), 1.5)
+        else:
+            # Derive from ai_risk_profile when not explicitly set
+            from core.config import settings
+            profile = str(risk_cfg.get("ai_risk_profile") or settings.risk.ai_risk_profile or "balanced").lower().strip()
+            profile_rr_defaults = {"conservative": 2.0, "balanced": 1.5, "aggressive": 1.2}
+            min_rr_ratio = profile_rr_defaults.get(profile, 1.5)
 
         levels = []
         remaining_pct = 100.0
@@ -1642,7 +1649,14 @@ class SignalProcessor:
             return (False, "Invalid SL distance")
 
         risk_cfg = user_settings.get("risk") or {}
-        min_rr_ratio = safe_float(risk_cfg.get("min_risk_reward_ratio"), 1.5)
+        if risk_cfg.get("min_risk_reward_ratio") is not None:
+            min_rr_ratio = safe_float(risk_cfg.get("min_risk_reward_ratio"), 1.5)
+        else:
+            # Derive from ai_risk_profile when not explicitly set
+            from core.config import settings
+            profile = str(risk_cfg.get("ai_risk_profile") or settings.risk.ai_risk_profile or "balanced").lower().strip()
+            profile_rr_defaults = {"conservative": 2.0, "balanced": 1.5, "aggressive": 1.2}
+            min_rr_ratio = profile_rr_defaults.get(profile, 1.5)
         min_avg_rr = safe_float(risk_cfg.get("min_avg_risk_reward_ratio"), 1.2)
 
         # Calculate TP1 R:R
