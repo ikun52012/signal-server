@@ -10,20 +10,20 @@
     <link href="https://cdn.jsdelivr.net/npm/remixicon@4.1.0/fonts/remixicon.css" rel="stylesheet">
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
-        :root{
+:root{
             --bg:#07090d;--card:rgba(15,21,32,.92);--border:rgba(148,163,184,.13);
-            --text:#eef4fb;--muted:#9caaba;--blue:#38bdf8;--cyan:#22d3ee;
-            --green:#2dd4bf;--red:#fb7185;--gradient:linear-gradient(135deg,#2dd4bf,#38bdf8);
+            --text:#eef4fb;--muted:#9caaba;--blue:#2563eb;--cyan:#0891b2;
+            --green:#059669;--red:#e11d48;--gradient:linear-gradient(135deg,#0d9488,#2563eb);
         }
         html{height:100%}
-        body{font-family:'Inter',sans-serif;background:radial-gradient(circle at 50% -20%,rgba(56,189,248,.08),transparent 32%),linear-gradient(180deg,#07090d,#090d14 48%,#070a10);color:var(--text);min-height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
+        body{font-family:'Inter',sans-serif;background:radial-gradient(circle at 50% -20%,rgba(37,99,235,.08),transparent 32%),linear-gradient(180deg,#07090d,#090d14 48%,#070a10);color:var(--text);min-height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
         h1,h2,h3{font-family:'Outfit',sans-serif;}
         .bg-grid{position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(rgba(148,163,184,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(148,163,184,.022) 1px,transparent 1px);background-size:40px 40px}
         .bg-glow{display:none}
         .g1,.g2{display:none}
         .auth-container{position:relative;z-index:1;width:100%;max-width:420px;padding:20px}
-        .auth-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:40px 36px;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);box-shadow:0 18px 50px rgba(0,0,0,.42);position:relative;overflow:hidden;}
-        .auth-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(45,212,191,.42),transparent)}
+.auth-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:40px 36px;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);box-shadow:0 18px 50px rgba(0,0,0,.42);position:relative;overflow:hidden;}
+        .auth-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(13,148,136,.42),transparent)}
         .auth-logo{text-align:center;margin-bottom:28px}
         .auth-logo i{font-size:36px;background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
         .auth-logo h1{font-size:24px;font-weight:700;margin-top:8px}
@@ -33,12 +33,12 @@
         .input-wrap{position:relative}
         .input-wrap i.icon-left{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:18px;color:var(--muted)}
         .input-wrap input{width:100%;padding:12px 42px 12px 42px;border-radius:7px;border:1px solid var(--border);background:rgba(8,13,21,.82);color:var(--text);font-size:14px;font-family:inherit;transition:border-color .2s}
-        .input-wrap input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(45,212,191,.13)}
+        .input-wrap input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(5,150,105,.13)}
         .input-wrap input::placeholder{color:rgba(136,146,168,.5)}
         .input-wrap .eye-btn{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;padding:4px;line-height:1;transition:color .2s}
         .input-wrap .eye-btn:hover{color:var(--text)}
         .btn-auth{width:100%;padding:13px;border:none;border-radius:7px;background:var(--gradient);color:#031015;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .2s;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:8px}
-        .btn-auth:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(45,212,191,.18)}
+        .btn-auth:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(13,148,136,.18)}
         .btn-auth:disabled{opacity:.6;cursor:not-allowed;transform:none;box-shadow:none}
         .auth-footer{text-align:center;margin-top:20px;font-size:13px;color:var(--muted)}
         .auth-footer a{color:var(--blue);text-decoration:none;font-weight:600}

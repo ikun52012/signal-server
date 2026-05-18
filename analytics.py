@@ -21,6 +21,12 @@ async def calculate_performance(
 ) -> dict[str, Any]:
     """
     Calculate comprehensive performance metrics.
+    
+    Uses mainstream quantitative finance methodology:
+    - Sharpe/Sortino: Annualized based on actual trades-per-day frequency
+    - Max Drawdown: Peak-to-trough percentage decline from equity high
+    - Profit Factor: Gross profit / gross loss
+    - Win Rate: Winning trades / total closed trades
     """
     cutoff = utcnow() - timedelta(days=days)
 
@@ -70,22 +76,33 @@ async def calculate_performance(
     equity_curve = _calculate_equity_curve(pnls)
     max_drawdown = _calculate_max_drawdown(equity_curve)
 
-    # Sharpe Ratio (simplified, assuming 0% risk-free rate)
+    # Sharpe Ratio (annualized, using average trades-per-day)
     if len(pnls) > 1:
         import statistics
         std = statistics.stdev(pnls) if len(pnls) > 1 else 0
         avg_pnl = sum(pnls) / len(pnls)
-        sharpe = (avg_pnl / std * (252 ** 0.5)) if std > 0 else 0
+        # Calculate average trades per day for proper annualization
+        trade_dates = set()
+        for t in closed_trades:
+            ts = getattr(t, 'timestamp', None)
+            if ts:
+                try:
+                    trade_dates.add(ts.strftime("%Y-%m-%d"))
+                except Exception:
+                    pass
+        avg_trades_per_day = len(trade_dates) / max(days, 1) if trade_dates else (len(pnls) / max(days, 1))
+        annualization_factor = (avg_trades_per_day * 252) ** 0.5 if avg_trades_per_day > 0 else (252 ** 0.5)
+        sharpe = (avg_pnl / std * annualization_factor) if std > 0 else 0
     else:
         sharpe = 0
 
-    # Sortino Ratio
+    # Sortino Ratio (annualized, using same trades-per-day)
     negative_returns = [p for p in pnls if p < 0]
     if negative_returns:
         import statistics
-        downside_std = statistics.stdev(negative_returns) if len(negative_returns) > 1 else 0
+        downside_std = statistics.stdev(negative_returns) if len(negative_returns) > 1 else abs(negative_returns[0])
         avg_pnl = sum(pnls) / len(pnls)
-        sortino = (avg_pnl / downside_std * (252 ** 0.5)) if downside_std > 0 else 0
+        sortino = (avg_pnl / downside_std * annualization_factor) if downside_std > 0 else 0
     else:
         sortino = sharpe
 
@@ -254,7 +271,11 @@ def _is_closed_trade(trade: Any) -> bool:
 
 
 def _calculate_equity_curve(pnls: list[float]) -> list[dict[str, float | int]]:
-    """Calculate cumulative equity curve."""
+    """Calculate cumulative equity curve from trade PnL percentages.
+    
+    Returns a list of dicts with trade number, per-trade PnL,
+    and cumulative PnL for chart rendering.
+    """
     curve: list[dict[str, float | int]] = []
     cumulative = 0.0
     for i, pnl in enumerate(pnls):
@@ -268,22 +289,30 @@ def _calculate_equity_curve(pnls: list[float]) -> list[dict[str, float | int]]:
 
 
 def _calculate_max_drawdown(equity_curve: list[dict[str, float | int]]) -> float:
-    """Calculate maximum drawdown percentage."""
+    """Calculate maximum drawdown percentage from equity curve.
+    
+    Uses the standard quant formula: max(peak - trough) / peak * 100.
+    Returns the peak-to-trough decline as a percentage of the peak.
+    """
     if not equity_curve:
         return 0
 
-    peak = 0.0
-    max_dd = 0.0
+    # Build equity series starting at 100 (like a portfolio starting at $100)
+    equity = 100.0
+    peak = 100.0
+    max_dd_pct = 0.0
 
     for point in equity_curve:
-        cum_pnl = point["cumulative_pnl"]
-        if cum_pnl > peak:
-            peak = cum_pnl
-        drawdown = peak - cum_pnl
-        if drawdown > max_dd:
-            max_dd = drawdown
+        pnl_pct = point["pnl"]
+        equity *= (1 + pnl_pct / 100.0)
+        if equity > peak:
+            peak = equity
+        # Drawdown as a percentage of peak
+        dd_pct = ((peak - equity) / peak) * 100 if peak > 0 else 0
+        if dd_pct > max_dd_pct:
+            max_dd_pct = dd_pct
 
-    return max_dd
+    return round(max_dd_pct, 2)
 
 
 def _calculate_consecutive(pnls: list[float]) -> tuple[int, int]:

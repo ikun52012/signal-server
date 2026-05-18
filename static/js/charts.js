@@ -77,10 +77,10 @@ function renderEquityChart(curve) {
 
     // Create gradient
     const gradient = ctx.createLinearGradient(0, 0, 0, 280);
-    gradient.addColorStop(0, 'rgba(59, 130, 246, 0.3)');
-    gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+    gradient.addColorStop(0, 'rgba(37, 99, 235, 0.3)');
+    gradient.addColorStop(1, 'rgba(37, 99, 235, 0.0)');
 
-    // Format labels
+    // Format labels: prefer date/timestamp, fall back to trade number
     const labels = curve.map(c => {
         if (c.date) return c.date;
         if (c.timestamp) {
@@ -89,7 +89,7 @@ function renderEquityChart(curve) {
                 day: 'numeric',
             });
         }
-        return '';
+        return `#${c.trade || ''}`;
     });
 
     equityChart = new Chart(ctx, {
@@ -99,7 +99,7 @@ function renderEquityChart(curve) {
             datasets: [{
                 label: 'Cumulative P&L %',
                 data: curve.map(c => c.cumulative_pnl),
-                borderColor: '#3b82f6',
+                borderColor: '#2563eb',
                 backgroundColor: gradient,
                 borderWidth: 2,
                 fill: true,
@@ -131,7 +131,7 @@ function renderDailyPnlChart(daily) {
                 label: 'Daily P&L %',
                 data: daily.map(d => d.pnl),
                 backgroundColor: daily.map(d =>
-                    d.pnl >= 0 ? 'rgba(16, 185, 129, 0.7)' : 'rgba(239, 68, 68, 0.7)'
+                    d.pnl >= 0 ? 'rgba(5, 150, 105, 0.7)' : 'rgba(225, 29, 72, 0.7)'
                 ),
                 borderRadius: 4,
             }],
@@ -161,7 +161,7 @@ function renderWinLossChart(perf) {
                     perf.losing_trades || 0,
                     perf.breakeven_trades || 0,
                 ],
-                backgroundColor: ['#10b981', '#ef4444', '#6b7280'],
+                backgroundColor: ['#059669', '#e11d48', '#6b7280'],
                 borderColor: 'transparent',
                 borderWidth: 0,
             }],

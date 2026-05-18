@@ -329,14 +329,14 @@ function updateUserUI() {
         roleEl.textContent = user.role === 'admin' ? 'Admin' : 'User';
         roleEl.className = `role-badge ${user.role === 'admin' ? 'admin' : 'user'}`;
     }
-    // Show/hide admin nav items
     document.querySelectorAll('.admin-only').forEach(el => {
         el.style.display = isAdmin() ? '' : 'none';
     });
     document.querySelectorAll('.user-only').forEach(el => {
-        el.style.display = isAdmin() ? 'none' : '';
+        el.style.display = ''; // user-only items always visible (My Trading)
     });
-    ['dashboard','positions','history','analytics','settings'].forEach(page => {
+    // Hide advanced pages from regular users
+    ['dashboard','positions','history','analytics','settings','strategies','strategy-editor','social'].forEach(page => {
         const el = document.querySelector(`.nav-item[data-page="${page}"]`);
         if (el && !isAdmin()) el.style.display = 'none';
     });
@@ -544,7 +544,7 @@ function closeSidebar() {
 
 function switchPage(page) {
     // Block non-admin from admin-only pages
-    if (!isAdmin() && (page === 'backtest' || page === 'admin' || page === 'settings' || page === 'dashboard' || page === 'positions' || page === 'history' || page === 'analytics')) {
+    if (!isAdmin() && (page === 'backtest' || page === 'admin' || page === 'settings' || page === 'dashboard' || page === 'positions' || page === 'history' || page === 'analytics' || page === 'strategies' || page === 'strategy-editor' || page === 'social')) {
         page = 'user';
     }
     document.querySelectorAll('.nav-item').forEach(n => { n.classList.remove('active'); n.removeAttribute('aria-current'); });
@@ -850,24 +850,54 @@ async function closeAllPositions() {
 }
 
 // ─── History ───
+let _historyAllTrades = [];
+let _historyPage = 1;
+
 async function loadHistory() {
     try {
         const days = document.getElementById('history-days')?.value || 30;
         const trades = await fetchAPI(`/api/history?days=${days}`);
-        const tbody = document.getElementById('history-body');
-        if (!trades.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No trades found</td></tr>'; return; }
-        tbody.innerHTML = trades.reverse().map(t => {
-            const dir = t.direction||'--', isLong = dir.includes('long'), conf = t.ai?.confidence||0;
-            const status = t.order_status||t.status||'--', pnl = t.pnl_pct||0;
-            const time = t.timestamp ? new Date(t.timestamp).toLocaleString() : '--';
-            const statusClass = safeClassToken(status);
-            const leverage = t.ai?.recommended_leverage ? ` / ${Number(t.ai.recommended_leverage).toFixed(1)}x` : '';
-            const tpText = Array.isArray(t.take_profit_levels) && t.take_profit_levels.length
-                ? formatTakeProfitLevels(t.take_profit_levels)
-                : (t.take_profit ? '$'+formatNum(t.take_profit) : '--');
-            return `<tr><td>${escapeHtml(time)}</td><td><strong>${escapeHtml(t.ticker||'--')}</strong></td><td><span class="badge ${isLong?'badge-long':'badge-short'}">${escapeHtml(dir)}</span></td><td>${t.entry_price?'$'+formatNum(t.entry_price):'--'}</td><td>${t.stop_loss?'$'+formatNum(t.stop_loss):'--'}</td><td>${tpText}</td><td>${(conf*100).toFixed(0)}%${escapeHtml(leverage)}</td><td><span class="badge badge-${statusClass}">${escapeHtml(status)}</span></td><td class="${pnl>=0?'pnl-positive':'pnl-negative'}">${pnl?pnl.toFixed(2)+'%':'--'}</td></tr>`;
-        }).join('');
+        _historyAllTrades = trades;
+        _historyPage = 1;
+        renderHistoryPage();
     } catch (err) { showToast(err.message, 'error', 'History Load Failed'); }
+}
+
+function renderHistoryPage() {
+    const trades = _historyAllTrades;
+    const tbody = document.getElementById('history-body');
+    if (!trades.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No trades found</td></tr>'; document.getElementById('history-pagination-top').innerHTML = ''; document.getElementById('history-pagination-bottom').innerHTML = ''; return; }
+    const pageSize = parseInt(document.getElementById('history-page-size')?.value || '100', 10);
+    const totalPages = Math.max(1, Math.ceil(trades.length / pageSize));
+    if (_historyPage > totalPages) _historyPage = totalPages;
+    const start = (_historyPage - 1) * pageSize;
+    const pageTrades = trades.slice(start, start + pageSize);
+    tbody.innerHTML = pageTrades.map(t => {
+        const dir = t.direction||'--', isLong = dir.includes('long'), conf = t.ai?.confidence||0;
+        const status = t.order_status||t.status||'--', pnl = t.pnl_pct||0;
+        const time = t.timestamp ? new Date(t.timestamp).toLocaleString() : '--';
+        const statusClass = safeClassToken(status);
+        const leverage = t.ai?.recommended_leverage ? ` / ${Number(t.ai.recommended_leverage).toFixed(1)}x` : '';
+        const tpText = Array.isArray(t.take_profit_levels) && t.take_profit_levels.length
+            ? formatTakeProfitLevels(t.take_profit_levels)
+            : (t.take_profit ? '$'+formatNum(t.take_profit) : '--');
+        return `<tr><td>${escapeHtml(time)}</td><td><strong>${escapeHtml(t.ticker||'--')}</strong></td><td><span class="badge ${isLong?'badge-long':'badge-short'}">${escapeHtml(dir)}</span></td><td>${t.entry_price?'$'+formatNum(t.entry_price):'--'}</td><td>${t.stop_loss?'$'+formatNum(t.stop_loss):'--'}</td><td>${tpText}</td><td>${(conf*100).toFixed(0)}%${escapeHtml(leverage)}</td><td><span class="badge badge-${statusClass}">${escapeHtml(status)}</span></td><td class="${pnl>=0?'pnl-positive':'pnl-negative'}">${pnl?pnl.toFixed(2)+'%':'--'}</td></tr>`;
+    }).join('');
+    const topEl = document.getElementById('history-pagination-top');
+    if (topEl) topEl.innerHTML = `<span>${trades.length} trades total</span><span>Page ${_historyPage} of ${totalPages}</span>`;
+    const botEl = document.getElementById('history-pagination-bottom');
+    if (!botEl) return;
+    let btns = '';
+    if (_historyPage > 1) btns += `<button class="btn btn-sm" onclick="_historyPage--;renderHistoryPage()"><i class="ri-arrow-left-s-line"></i> Prev</button>`;
+    const maxButtons = 7;
+    let startP = Math.max(1, _historyPage - 3);
+    let endP = Math.min(totalPages, startP + maxButtons - 1);
+    if (endP - startP < maxButtons - 1) startP = Math.max(1, endP - maxButtons + 1);
+    for (let p = startP; p <= endP; p++) {
+        btns += `<button class="btn btn-sm${p === _historyPage ? ' active' : ''}" onclick="_historyPage=${p};renderHistoryPage()">${p}</button>`;
+    }
+    if (_historyPage < totalPages) btns += `<button class="btn btn-sm" onclick="_historyPage++;renderHistoryPage()">Next <i class="ri-arrow-right-s-line"></i></button>`;
+    botEl.innerHTML = btns;
 }
 
 // ─── Analytics ───
@@ -883,11 +913,21 @@ async function loadAnalytics() {
         const metrics = [['Total P&L',`${(perf.total_pnl_pct||0).toFixed(2)}%`],['Win Rate',`${(perf.win_rate||0).toFixed(1)}%`],['Total Trades',perf.total_trades||0],['Avg Win',`${(perf.avg_win_pct||0).toFixed(2)}%`],['Avg Loss',`${(perf.avg_loss_pct||0).toFixed(2)}%`],['Sharpe',(perf.sharpe_ratio||0).toFixed(2)],['Sortino',(perf.sortino_ratio||0).toFixed(2)],['Max DD',`${(perf.max_drawdown_pct||0).toFixed(2)}%`],['Profit Factor',formatValue(perf.profit_factor)],['Best Trade',`${(perf.best_trade_pct||0).toFixed(2)}%`],['Worst Trade',`${(perf.worst_trade_pct||0).toFixed(2)}%`],['Consec. Wins',perf.max_consecutive_wins||0]];
         document.getElementById('detailed-metrics').innerHTML = metrics.map(([l,v]) => `<div class="metric-item"><span class="metric-label">${l}</span><span class="metric-value">${v}</span></div>`).join('');
         const ai = perf.ai_stats || {};
-        document.getElementById('ai-stats').innerHTML = `
-            <div class="ai-stat-card"><div class="stat-label">High-Conf Win Rate</div><div class="stat-value pnl-positive">${(ai.high_confidence_win_rate||0).toFixed(1)}%</div><div class="hint">${ai.high_confidence_trades||0} trades</div></div>
-            <div class="ai-stat-card"><div class="stat-label">Low-Conf Win Rate</div><div class="stat-value pnl-negative">${(ai.low_confidence_win_rate||0).toFixed(1)}%</div><div class="hint">${ai.low_confidence_trades||0} trades</div></div>
-            <div class="ai-stat-card"><div class="stat-label">Avg Confidence</div><div class="stat-value">${((ai.avg_confidence||0)*100).toFixed(1)}%</div></div>
-            <div class="ai-stat-card"><div class="stat-label">AI Edge</div><div class="stat-value ${(ai.high_confidence_win_rate-ai.low_confidence_win_rate)>0?'pnl-positive':'pnl-negative'}">${((ai.high_confidence_win_rate||0)-(ai.low_confidence_win_rate||0)).toFixed(1)}%</div></div>`;
+        const aiStatsEl = document.getElementById('ai-stats');
+        if (!ai || (ai.high_confidence_trades === 0 && ai.low_confidence_trades === 0 && ai.avg_confidence === 0)) {
+            aiStatsEl.innerHTML = `
+                <div style="grid-column:1/-1;text-align:center;padding:32px 16px">
+                    <i class="ri-robot-2-line" style="font-size:36px;color:var(--text-muted);display:block;margin-bottom:12px"></i>
+                    <p style="color:var(--text-secondary);font-size:14px;margin:0 0 8px">No AI analysis data available yet</p>
+                    <p style="color:var(--text-muted);font-size:13px;margin:0">AI performance metrics will appear here once trades with AI confidence scores are recorded. Enable an AI provider in Settings to get started.</p>
+                </div>`;
+        } else {
+            aiStatsEl.innerHTML = `
+                <div class="ai-stat-card"><div class="stat-label">High-Conf Win Rate</div><div class="stat-value pnl-positive">${(ai.high_confidence_win_rate||0).toFixed(1)}%</div><div class="hint">${ai.high_confidence_trades||0} trades</div></div>
+                <div class="ai-stat-card"><div class="stat-label">Low-Conf Win Rate</div><div class="stat-value pnl-negative">${(ai.low_confidence_win_rate||0).toFixed(1)}%</div><div class="hint">${ai.low_confidence_trades||0} trades</div></div>
+                <div class="ai-stat-card"><div class="stat-label">Avg Confidence</div><div class="stat-value">${((ai.avg_confidence||0)*100).toFixed(1)}%</div></div>
+                <div class="ai-stat-card"><div class="stat-label">AI Edge</div><div class="stat-value ${(ai.high_confidence_win_rate-ai.low_confidence_win_rate)>0?'pnl-positive':'pnl-negative'}">${((ai.high_confidence_win_rate||0)-(ai.low_confidence_win_rate||0)).toFixed(1)}%</div></div>`;
+        }
     } catch (err) { showToast(err.message, 'error', 'Analytics Load Failed'); }
 }
 
@@ -1106,7 +1146,14 @@ async function loadAdminWebhookConfig() {
         const webhookConfig = await fetchAPI('/api/admin/webhook-config');
         setText('webhook-url', webhookConfig.webhook_url || `${window.location.origin}/webhook`);
         setText('admin-webhook-secret', webhookConfig.secret || '');
-        setText('admin-webhook-template', webhookConfig.template || '');
+        try {
+            const tpl = JSON.parse(webhookConfig.template || '{}');
+            if (tpl && webhookConfig.secret) tpl.secret = webhookConfig.secret;
+            const templateEl = document.getElementById('admin-webhook-template');
+            if (templateEl) templateEl.textContent = JSON.stringify(tpl, null, 2);
+        } catch (e) {
+            setText('admin-webhook-template', webhookConfig.template || '');
+        }
     } catch (e) {
         console.error('Webhook config load error:', e);
         setText('admin-webhook-secret', 'Unable to load. Make sure you are logged in as admin and the backend image is updated.');
@@ -1426,8 +1473,52 @@ function renderUserSettings(data) {
     });
     toggleUserTPLevels();
     setText('user-webhook-url', wh.url || `${window.location.origin}/webhook`);
-    setText('user-webhook-secret', wh.secret || '');
-    setText('user-webhook-template', wh.template || '');
+    const secretDisplay = wh.secret || wh.secret_masked || '';
+    setText('user-webhook-secret', secretDisplay);
+    const templateStr = wh.template || '';
+    const templateEl = document.getElementById('user-webhook-template');
+    if (templateEl) {
+        try {
+            const tpl = JSON.parse(templateStr);
+            if (tpl && wh.secret && !wh.secret_masked) {
+                tpl.secret = wh.secret;
+            } else if (tpl && wh.secret_masked) {
+                tpl.secret = wh.secret_masked;
+            }
+            templateEl.textContent = JSON.stringify(tpl, null, 2);
+        } catch (e) {
+            templateEl.textContent = templateStr;
+        }
+    }
+    // Add reveal button for webhook secret
+    const secretBox = document.getElementById('user-webhook-secret');
+    if (secretBox && wh.secret_masked && !wh.secret) {
+        const revealBtn = secretBox.parentElement.querySelector('.btn-reveal-secret');
+        if (!revealBtn) {
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-sm btn-reveal-secret';
+            btn.style.cssText = 'margin-left:8px;font-size:11px;padding:2px 8px';
+            btn.innerHTML = '<i class="ri-eye-line"></i> Reveal';
+            btn.onclick = async () => {
+                try {
+                    const data = await fetchAPI('/api/webhook-secret');
+                    if (data.secret) {
+                        setText('user-webhook-secret', data.secret);
+                        btn.innerHTML = '<i class="ri-eye-off-line"></i> Hidden';
+                        btn.disabled = true;
+                        setTimeout(() => {
+                            setText('user-webhook-secret', wh.secret_masked || '***');
+                            btn.innerHTML = '<i class="ri-eye-line"></i> Reveal';
+                            btn.disabled = false;
+                        }, 30000);
+                    }
+                } catch (e) {
+                    showToast('Failed to reveal webhook secret', 'error');
+                }
+            };
+            secretBox.parentElement.appendChild(btn);
+        }
+    }
 }
 
 function renderUserPerformance(perf, sub) {
