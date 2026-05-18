@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QuantPilot AI — Dashboard</title>
     <meta name="description" content="QuantPilot AI trading operations dashboard">
-    <meta name="theme-color" content="#0f151f">
+    <meta name="theme-color" content="#ffffff">
     <link rel="manifest" href="/static/manifest.json?v=20260504-2">
     <link href="https://cdn.jsdelivr.net/npm/remixicon@4.1.0/fonts/remixicon.css" rel="stylesheet">
     <script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
@@ -2231,16 +2231,16 @@
     </main>
 
     <!-- Payment Modal -->
-    <div id="payment-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);align-items:center;justify-content:center">
-        <div style="background:var(--card-bg,#111827);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:32px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto" id="payment-modal-body">Loading...</div>
+    <div id="payment-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.4);backdrop-filter:blur(4px);align-items:center;justify-content:center">
+        <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:32px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.12)" id="payment-modal-body">Loading...</div>
     </div>
 
     <!-- Strategy Detail Modal -->
-    <div id="strategy-detail-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);align-items:center;justify-content:center" onclick="if(event.target===this)closeStrategyDetail()">
-        <div style="background:var(--card-bg,#111827);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:0;max-width:900px;width:95%;max-height:90vh;overflow-y:auto">
+    <div id="strategy-detail-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);backdrop-filter:blur(6px);align-items:center;justify-content:center" onclick="if(event.target===this)closeStrategyDetail()">
+        <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:0;max-width:900px;width:95%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.12)">
             <div style="padding:24px 32px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;align-items:center">
                 <h3 id="strategy-detail-title" style="margin:0;font-size:18px">Strategy Detail</h3>
-                <button onclick="closeStrategyDetail()" style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:20px"><i class="ri-close-line"></i></button>
+                <button onclick="closeStrategyDetail()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:20px"><i class="ri-close-line"></i></button>
             </div>
             <div id="strategy-detail-body" style="padding:32px">Loading...</div>
         </div>
