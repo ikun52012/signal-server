@@ -591,7 +591,7 @@ def get_market_limits(exchange_id: str, symbol: str, market_type: str = "contrac
             "exchange": exchange_id,
         }
 
-        if contract_size > 1.0:
+        if contract_size != 1.0:
             logger.debug(
                 f"[Exchange] Market limits for {resolved_symbol or symbol}: "
                 f"min_amount={min_amount}, max_amount={max_amount}, "
@@ -1523,7 +1523,7 @@ async def execute_trade(decision: TradeDecision, exchange_config: dict | None = 
             ex_id = exchange_config.get("exchange") or exchange_config.get("name") or settings.exchange.name
             mkt_type = exchange_config.get("market_type") or settings.exchange.market_type
             limits = get_market_limits(ex_id, decision.ticker, mkt_type)
-            if limits and limits.get("contract_size", 1.0) > 1.0:
+            if limits and limits.get("contract_size", 1.0) != 1.0:
                 contract_size = float(limits.get("contract_size", 1.0))
         except Exception:
             contract_size = 1.0

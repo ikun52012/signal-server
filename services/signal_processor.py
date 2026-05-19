@@ -1908,7 +1908,7 @@ class SignalProcessor:
                     exchange_id = exchange_config.get("exchange") or exchange_config.get("name") or settings.exchange.name
                     market_type = exchange_config.get("market_type") or settings.exchange.market_type
                     limits = get_market_limits(exchange_id, decision.ticker, market_type)
-                    if limits and limits.get("contract_size", 1.0) > 1.0:
+                    if limits and limits.get("contract_size", 1.0) != 1.0:
                         new_contract_size = float(limits.get("contract_size", 1.0))
                 except Exception:
                     pass
@@ -2147,14 +2147,14 @@ class SignalProcessor:
                 market_type = exchange_config.get("market_type") or settings.exchange.market_type
 
                 limits = get_market_limits(exchange_id, decision.ticker, market_type)
-                if limits and limits.get("contract_size", 1.0) > 1.0:
+                if limits and limits.get("contract_size", 1.0) != 1.0:
                     contract_size = float(limits.get("contract_size", 1.0))
             except Exception:
                 pass
 
         # For contract markets, quantity is contract count (notional / price / contractSize)
         # For spot markets, quantity is base currency amount (notional / price)
-        if contract_size > 1.0:
+        if contract_size != 1.0:
             quantity = notional_value / (price * contract_size)
         else:
             quantity = notional_value / price
@@ -2179,7 +2179,7 @@ class SignalProcessor:
                     min_cost = limits.get("min_cost", 0)
                     max_cost = limits.get("max_cost", float("inf"))
                     if min_cost > 0 or max_cost < float("inf"):
-                        if contract_size > 1.0:
+                        if contract_size != 1.0:
                             final_cost = quantity * price * contract_size
                             logger.info(
                                 f"[PositionSize] Exchange limits applied: "
@@ -2196,7 +2196,7 @@ class SignalProcessor:
             except Exception as e:
                 logger.warning(f"[PositionSize] Could not apply exchange limits: {e}")
 
-        if contract_size > 1.0:
+        if contract_size != 1.0:
             actual_quantity = quantity * contract_size
             logger.info(
                 f"[PositionSize] Contract size adjustment: "
@@ -2455,7 +2455,7 @@ class SignalProcessor:
             exchange_id = exchange_config.get("exchange") or exchange_config.get("name") or settings.exchange.name
             market_type = exchange_config.get("market_type") or settings.exchange.market_type
             limits = get_market_limits(exchange_id, decision.ticker, market_type)
-            if limits and limits.get("contract_size", 1.0) > 1.0:
+            if limits and limits.get("contract_size", 1.0) != 1.0:
                 contract_size = float(limits.get("contract_size", 1.0))
         except Exception:
             pass
