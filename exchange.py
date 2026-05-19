@@ -2764,16 +2764,15 @@ async def _fetch_okx_open_algo_orders(exchange: ccxt.Exchange, resolved_symbol: 
                 logger.debug(f"[Exchange] OKX algo order query failed for ordType={ord_type}: {exc}")
         if fallback_orders:
             return [_normalize_open_order(order, source="okx_algo") for order in fallback_orders]
-        # P0-FIX: OKX sandbox requires ordType param — first call without it fails,
-        # and fallback loop may return empty results (not errors). NEVER re-raise,
-        # because _verify_protective_orders catches the exception and skips SL/TP
-        # re-creation entirely. Return empty list so protective orders get re-placed.
+        # P0-FIX: Re-raise when all queries fail. Empty list would cause _verify_protective_orders
+        # to think all TP/SL orders are missing and re-create them, leading to duplicates.
+        # By raising, we let the caller's exception handler skip verification safely.
         logger.warning(
             f"[Exchange] OKX algo order query failed and fallback returned no orders. "
-            f"Returning empty list to avoid blocking SL/TP verification. "
+            f"Re-raising to prevent false 'missing order' detection. "
             f"Error: {first_exc}"
         )
-        return []
+        raise first_exc
 
 
 async def get_open_orders(symbol: str | None = None, exchange_config: dict | None = None) -> list[dict]:
